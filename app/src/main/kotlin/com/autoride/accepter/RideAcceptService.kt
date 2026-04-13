@@ -55,7 +55,7 @@ class RideAcceptService : AccessibilityService() {
 
     companion object {
         private const val TAG = "RideAcceptService"
-        private const val ACTION_COOLDOWN_MS = 1L
+        private const val ACTION_COOLDOWN_MS = 12L
         private const val REPEAT_ACTION_SUPPRESS_MS = 400L
         private const val SCRAPE_LOG_THROTTLE_MS = 1500L
         private const val FULL_TREE_SCAN_THROTTLE_MS = 80L
