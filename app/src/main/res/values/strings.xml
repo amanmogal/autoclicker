@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Auto Ride Accepter</string>
+    <string name="service_label">Ride Auto Accept Service</string>
+    <string name="accessibility_description">Auto-accepts ride requests in supported driver apps when your fare and distance filters match.</string>
+    <string name="status_icon_desc">Status Icon</string>
+    <string name="title_text">Auto Ride Accepter</string>
+    <string name="switch_label">Enable Auto-Accept</string>
+    <string name="status_waiting">Status: Waiting for Activation</string>
+    <string name="status_format">Status: %1$s | Accessibility %2$s</string>
+    <string name="mode_on">Auto-Accept ON</string>
+    <string name="mode_off">Auto-Accept OFF</string>
+    <string name="overlay_status_on">AUTO ON</string>
+    <string name="overlay_status_off">AUTO OFF</string>
+    <string name="accessibility_enabled">Enabled</string>
+    <string name="accessibility_disabled">Disabled</string>
+    <string name="overlay_help_text">Hover Control: drag bubble to move, tap to toggle Auto-Accept, long-press to open app.</string>
+    <string name="scope_text">Scope: Driver apps only (Rapido, Ola, Uber, Namma, Yatri). Customer apps are ignored.</string>
+    <string name="behavior_text">Behavior: scans ride-request screens, extracts fare and distance, and auto-clicks Accept/Swipe only when filters pass.</string>
+    <string name="price_range_title">Price Range (₹)</string>
+    <string name="distance_range_title">Distance Range (KM)</string>
+    <string name="hint_min_price">Min Price</string>
+    <string name="hint_max_price">Max Price</string>
+    <string name="hint_min_distance">Min Dist</string>
+    <string name="hint_max_distance">Max Dist</string>
+    <string name="hint_min_fare_per_km">Minimum Fare Per KM (₹)</string>
+    <string name="save_filters">Save Filters</string>
+    <string name="open_accessibility">Open Accessibility Settings</string>
+</resources>

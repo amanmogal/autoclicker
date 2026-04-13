@@ -1,0 +1,20 @@
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Runtime / local state
+.omx/
+logs.txt
+
+# Generated binaries
+*.apk
+*.ap_
+
+# macOS
+.DS_Store
