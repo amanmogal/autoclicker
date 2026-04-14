@@ -11,8 +11,8 @@ android {
         applicationId "com.autoride.accepter"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
     }
 
     buildTypes {
@@ -34,7 +34,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "AutoRideAccepter_Latest.apk"
+            outputFileName = "bobrider_v1.1.apk"
         }
     }
 }
@@ -48,7 +48,7 @@ dependencies {
 }
 
 task copyApk(type: Copy) {
-    from("${project.buildDir}/outputs/apk/debug/AutoRideAccepter_Latest.apk")
+    from("${project.buildDir}/outputs/apk/debug/bobrider_v1.1.apk")
     into("${project.rootDir}/release_apk")
     dependsOn 'assembleDebug'
 }

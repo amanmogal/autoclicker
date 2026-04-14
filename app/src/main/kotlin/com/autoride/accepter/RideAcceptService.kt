@@ -9,6 +9,8 @@ import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.MotionEvent
 import android.view.Gravity
@@ -66,6 +68,13 @@ class RideAcceptService : AccessibilityService() {
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var overlayAttached = false
     private var settingsPrefs: SharedPreferences? = null
+    private val backgroundSweepHandler = Handler(Looper.getMainLooper())
+    private val backgroundSweepRunnable = object : Runnable {
+        override fun run() {
+            runBackgroundWindowSweep()
+            backgroundSweepHandler.postDelayed(this, BACKGROUND_WINDOW_SWEEP_INTERVAL_MS)
+        }
+    }
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == null || key.startsWith("service") || key.contains("Fare") || key.contains("Distance") || key.contains("fare") || key.contains("distance")) {
             updateSettings()
@@ -80,6 +89,7 @@ class RideAcceptService : AccessibilityService() {
         private const val FULL_TREE_SCAN_THROTTLE_MS = 180L
         private const val EVENT_PROCESS_IDLE_THROTTLE_MS = 140L
         private const val EVENT_PROCESS_PRIORITY_THROTTLE_MS = 40L
+        private const val BACKGROUND_WINDOW_SWEEP_INTERVAL_MS = 450L
         private const val OVERLAY_TOGGLE_DEBOUNCE_MS = 700L
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
@@ -150,6 +160,18 @@ class RideAcceptService : AccessibilityService() {
         loadRuntimeMetrics()
         showOverlay()
         updateSettings()
+        startBackgroundWindowSweep()
+    }
+
+    private fun startBackgroundWindowSweep() {
+        backgroundSweepHandler.removeCallbacks(backgroundSweepRunnable)
+        backgroundSweepHandler.post(backgroundSweepRunnable)
+    }
+
+    private fun runBackgroundWindowSweep() {
+        if (!isAutoAcceptEnabled || gestureInFlight) return
+        runCatching { processAllWindows() }
+            .onFailure { error -> Log.e(TAG, "Background window sweep failed", error) }
     }
 
     private fun showOverlay() {
@@ -446,7 +468,8 @@ class RideAcceptService : AccessibilityService() {
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
             processAllWindows()
         }
@@ -1304,6 +1327,7 @@ class RideAcceptService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        backgroundSweepHandler.removeCallbacks(backgroundSweepRunnable)
         settingsPrefs?.unregisterOnSharedPreferenceChangeListener(settingsListener)
         settingsPrefs = null
         overlayView?.let {
