@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.HapticFeedbackConstants
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -36,8 +37,11 @@ class RideAcceptService : AccessibilityService() {
     private var lastScrapeLogAtMs = 0L
     private var lastScrapeSnapshot: String? = null
     private var lastFullTreeScanAtMs = 0L
+    private var lastProcessAtMs = 0L
     private var lastOverlayToggleAtMs = 0L
     private var lastNoTargetLogAtMs = 0L
+    private var lastFilterRejectLogAtMs = 0L
+    private var lastFilterRejectSnapshot: String? = null
     private var lastEventFare = 0.0
     private var lastEventDistance = 0.0
     private var lastEventDataAtMs = 0L
@@ -67,14 +71,20 @@ class RideAcceptService : AccessibilityService() {
         private const val ACTION_COOLDOWN_MS = 12L
         private const val REPEAT_ACTION_SUPPRESS_MS = 400L
         private const val SCRAPE_LOG_THROTTLE_MS = 1500L
-        private const val FULL_TREE_SCAN_THROTTLE_MS = 80L
+        private const val FULL_TREE_SCAN_THROTTLE_MS = 180L
+        private const val EVENT_PROCESS_IDLE_THROTTLE_MS = 140L
+        private const val EVENT_PROCESS_PRIORITY_THROTTLE_MS = 40L
         private const val OVERLAY_TOGGLE_DEBOUNCE_MS = 700L
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
-        private const val EVENT_DATA_TTL_MS = 500L
+        private const val FILTER_REJECT_LOG_THROTTLE_MS = 1500L
+        private const val EVENT_DATA_TTL_MS = 2200L
         private const val GESTURE_INFLIGHT_TIMEOUT_MS = 1200L
         private const val FALLBACK_MIN_SCORE_WITH_DISTANCE = 7
         private const val FALLBACK_MIN_SCORE_DISTANCE_MISSING = 10
+        private const val OVERLAY_DEFAULT_X = 0
+        private const val OVERLAY_DEFAULT_Y = 100
+        private const val OVERLAY_EDGE_MARGIN_PX = 24
 
         private val ACCEPT_KEYWORDS = setOf(
             // Keep this strict to avoid false positives like "Go To".
@@ -127,9 +137,10 @@ class RideAcceptService : AccessibilityService() {
         super.onServiceConnected()
         Log.d(TAG, "Service Connected - Listening for target apps")
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        settingsPrefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE).also {
+        settingsPrefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE).also {
             it.registerOnSharedPreferenceChangeListener(settingsListener)
         }
+        loadRuntimeMetrics()
         showOverlay()
         updateSettings()
     }
@@ -145,8 +156,9 @@ class RideAcceptService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = 0
-        params.y = 100
+        val prefs = settingsPrefs ?: getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        params.x = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_X, OVERLAY_DEFAULT_X)
+        params.y = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_Y, OVERLAY_DEFAULT_Y)
 
         overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_status, null)
         overlayLayoutParams = params
@@ -154,6 +166,11 @@ class RideAcceptService : AccessibilityService() {
         runCatching {
             windowManager.addView(overlayView, params)
             overlayAttached = true
+            overlayView?.post {
+                clampOverlayPosition(params, overlayView)
+                updateOverlayPosition()
+                persistOverlayPosition(params)
+            }
         }.onFailure { error ->
             Log.e(TAG, "Overlay attach failed", error)
         }
@@ -191,15 +208,24 @@ class RideAcceptService : AccessibilityService() {
                     }
                     params.x = initialX + dx
                     params.y = initialY + dy
-                    if (overlayAttached) {
-                        runCatching { windowManager.updateViewLayout(view, params) }
-                    }
+                    clampOverlayPosition(params, view)
+                    updateOverlayPosition()
                     true
                 }
 
                 MotionEvent.ACTION_UP -> {
                     val pressDuration = System.currentTimeMillis() - downAtMs
-                    if (!moved) {
+                    if (moved) {
+                        clampOverlayPosition(params, view)
+                        if (isOverlaySnapEnabled()) {
+                            val snapped = snapOverlayToNearestEdge(params, view)
+                            if (snapped) {
+                                view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+                            }
+                        }
+                        updateOverlayPosition()
+                        persistOverlayPosition(params)
+                    } else {
                         view.performClick()
                         if (pressDuration >= 650L) {
                             launchMainActivityFromOverlay()
@@ -207,7 +233,7 @@ class RideAcceptService : AccessibilityService() {
                             val now = System.currentTimeMillis()
                             if (now - lastOverlayToggleAtMs >= OVERLAY_TOGGLE_DEBOUNCE_MS) {
                                 lastOverlayToggleAtMs = now
-                                toggleServiceEnabledFromOverlay()
+                                toggleServiceEnabledFromOverlay(view)
                             } else {
                                 Log.d(TAG, "Overlay tap ignored (debounced)")
                             }
@@ -221,19 +247,21 @@ class RideAcceptService : AccessibilityService() {
         }
     }
 
-    private fun toggleServiceEnabledFromOverlay() {
-        val prefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE)
-        if (isAutoAcceptEnabled) {
-            Log.d(TAG, "Overlay tap ignored: service already enabled")
-            return
-        }
-        val nextEnabled = true
+    private fun toggleServiceEnabledFromOverlay(anchorView: View) {
+        val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        val nextEnabled = !isAutoAcceptEnabled
         prefs.edit()
-            .putBoolean("serviceEnabled", nextEnabled)
-            .putBoolean("service_enabled", nextEnabled)
+            .putBoolean(AppPrefsKeys.KEY_SERVICE_ENABLED, nextEnabled)
+            .putBoolean(AppPrefsKeys.KEY_SERVICE_ENABLED_LEGACY, nextEnabled)
             .apply()
         updateSettings()
         Log.d(TAG, "Overlay toggle: serviceEnabled=$nextEnabled")
+        val announceText = if (nextEnabled) {
+            getString(R.string.overlay_mode_enabled_announce)
+        } else {
+            getString(R.string.overlay_mode_disabled_announce)
+        }
+        anchorView.announceForAccessibility(announceText)
     }
 
     private fun launchMainActivityFromOverlay() {
@@ -252,21 +280,34 @@ class RideAcceptService : AccessibilityService() {
             if (isAutoAcceptEnabled) {
                 icon.setColorFilter(Color.GREEN)
                 it.background.setTint(Color.parseColor("#CC000000"))
-                statusText.text = getString(R.string.overlay_status_on)
             } else {
                 icon.setColorFilter(Color.RED)
                 it.background.setTint(Color.parseColor("#CC444444"))
-                statusText.text = getString(R.string.overlay_status_off)
             }
+            val state = if (isAutoAcceptEnabled) {
+                getString(R.string.overlay_status_on)
+            } else {
+                getString(R.string.overlay_status_off)
+            }
+            val label = getString(R.string.overlay_status_format, state, offerAcceptedCount, gestureFailedCount)
+            statusText.text = label
+            val contentDescription = getString(
+                R.string.overlay_status_accessibility,
+                state,
+                offerAcceptedCount,
+                gestureFailedCount
+            )
+            statusText.contentDescription = contentDescription
+            it.contentDescription = contentDescription
         }
     }
 
     private fun updateSettings() {
-        val prefs = settingsPrefs ?: getSharedPreferences("RideFilters", Context.MODE_PRIVATE)
+        val prefs = settingsPrefs ?: getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
         isAutoAcceptEnabled = readBooleanPref(
             prefs,
-            "serviceEnabled",
-            "service_enabled",
+            AppPrefsKeys.KEY_SERVICE_ENABLED,
+            AppPrefsKeys.KEY_SERVICE_ENABLED_LEGACY,
             true
         )
 
@@ -291,6 +332,72 @@ class RideAcceptService : AccessibilityService() {
         updateOverlayStatus()
     }
 
+    private fun loadRuntimeMetrics() {
+        val prefs = settingsPrefs ?: return
+        offerSeenCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, 0L)
+        offerAcceptedCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, 0L)
+        gestureSentCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, 0L)
+        gestureFailedCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, 0L)
+    }
+
+    private fun persistRuntimeMetrics() {
+        val prefs = settingsPrefs ?: getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, offerSeenCount)
+            .putLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, offerAcceptedCount)
+            .putLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, gestureSentCount)
+            .putLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, gestureFailedCount)
+            .apply()
+    }
+
+    private fun persistOverlayPosition(params: WindowManager.LayoutParams) {
+        val prefs = settingsPrefs ?: getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putInt(AppPrefsKeys.KEY_OVERLAY_X, params.x)
+            .putInt(AppPrefsKeys.KEY_OVERLAY_Y, params.y)
+            .apply()
+    }
+
+    private fun isOverlaySnapEnabled(): Boolean {
+        val prefs = settingsPrefs ?: getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(AppPrefsKeys.KEY_OVERLAY_SNAP_ENABLED, true)
+    }
+
+    private fun clampOverlayPosition(params: WindowManager.LayoutParams, view: View?) {
+        val metrics = resources.displayMetrics
+        val overlayWidth = view?.width?.takeIf { it > 0 }
+            ?: view?.measuredWidth?.takeIf { it > 0 }
+            ?: 180
+        val overlayHeight = view?.height?.takeIf { it > 0 }
+            ?: view?.measuredHeight?.takeIf { it > 0 }
+            ?: 80
+
+        val maxX = max(0, metrics.widthPixels - overlayWidth - OVERLAY_EDGE_MARGIN_PX)
+        val maxY = max(0, metrics.heightPixels - overlayHeight - OVERLAY_EDGE_MARGIN_PX)
+        params.x = params.x.coerceIn(0, maxX)
+        params.y = params.y.coerceIn(0, maxY)
+    }
+
+    private fun snapOverlayToNearestEdge(params: WindowManager.LayoutParams, view: View?): Boolean {
+        val metrics = resources.displayMetrics
+        val overlayWidth = view?.width?.takeIf { it > 0 }
+            ?: view?.measuredWidth?.takeIf { it > 0 }
+            ?: 180
+        val maxX = max(0, metrics.widthPixels - overlayWidth - OVERLAY_EDGE_MARGIN_PX)
+        val targetX = if (params.x < maxX / 2) 0 else maxX
+        val changed = params.x != targetX
+        params.x = targetX
+        return changed
+    }
+
+    private fun updateOverlayPosition() {
+        val view = overlayView ?: return
+        val params = overlayLayoutParams ?: return
+        if (!overlayAttached) return
+        runCatching { windowManager.updateViewLayout(view, params) }
+            .onFailure { error -> Log.e(TAG, "Overlay position update failed", error) }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             updateSettings()
@@ -299,14 +406,17 @@ class RideAcceptService : AccessibilityService() {
 
         if (!isAutoAcceptEnabled) return
 
-        val packageName = event.packageName?.toString() ?: return
+        val packageName = event.packageName?.toString().orEmpty()
+        val fromRideApp = isRideApp(packageName)
 
-        if (!isRideApp(packageName)) return
-        if (packageName != lastRideEventPackage) {
+        if (fromRideApp && packageName != lastRideEventPackage) {
             lastRideEventPackage = packageName
             clearEventDataCache("ride-package-change")
         }
-        captureEventData(event)
+        if (fromRideApp) {
+            captureEventData(event)
+        }
+        if (!shouldProcessEvent(event)) return
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
@@ -316,18 +426,64 @@ class RideAcceptService : AccessibilityService() {
         }
     }
 
+    private fun shouldProcessEvent(event: AccessibilityEvent): Boolean {
+        val now = System.currentTimeMillis()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastProcessAtMs = now
+            return true
+        }
+
+        val parts = mutableListOf<String>()
+        event.text?.forEach { value ->
+            value?.toString()?.let { if (it.isNotBlank()) parts.add(it) }
+        }
+        event.contentDescription?.toString()?.let { if (it.isNotBlank()) parts.add(it) }
+        event.source?.let { source ->
+            val sourceText = extractNodeSubtreeText(source, maxDepth = 1)
+            if (sourceText.isNotBlank()) parts.add(sourceText)
+        }
+        val payload = parts.joinToString(separator = " ").lowercase()
+        val hasPrioritySignal = payload.isNotBlank() && (
+            containsCurrency(payload) ||
+                containsDistance(payload) ||
+                isAcceptText(payload) ||
+                isSwipeText(payload)
+            )
+
+        val throttleMs = if (hasPrioritySignal) {
+            EVENT_PROCESS_PRIORITY_THROTTLE_MS
+        } else {
+            EVENT_PROCESS_IDLE_THROTTLE_MS
+        }
+
+        val elapsed = now - lastProcessAtMs
+        if (elapsed < throttleMs) {
+            return false
+        }
+
+        lastProcessAtMs = now
+        return true
+    }
+
     private fun processAllWindows() {
         var processedWindow = false
 
         for (window in windows) {
             if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
             val rootNode = window.root ?: continue
+            val rootPackage = rootNode.packageName?.toString().orEmpty()
+            if (!isRideApp(rootPackage)) continue
             processedWindow = true
-            processScreenContent(rootNode, windowTypeToString(window.type))
+            processScreenContent(rootNode, "${windowTypeToString(window.type)}:$rootPackage")
         }
 
         if (!processedWindow) {
-            rootInActiveWindow?.let { processScreenContent(it, "ACTIVE_WINDOW") }
+            rootInActiveWindow?.let { activeRoot ->
+                val activePackage = activeRoot.packageName?.toString().orEmpty()
+                if (isRideApp(activePackage)) {
+                    processScreenContent(activeRoot, "ACTIVE_WINDOW:$activePackage")
+                }
+            }
         }
     }
 
@@ -387,7 +543,10 @@ class RideAcceptService : AccessibilityService() {
 
         maybeLogScrapedData(windowType, fare, distance)
 
-        if (!filterEngine.shouldAccept(fare, distance)) return
+        if (!filterEngine.shouldAccept(fare, distance)) {
+            maybeLogFilterRejected(windowType, fare, distance)
+            return
+        }
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
         recordOfferSeen(windowType, actionSignature, fare, distance)
         if (!canAttemptAction(actionSignature)) return
@@ -490,9 +649,13 @@ class RideAcceptService : AccessibilityService() {
             }.getOrDefault(false)
             if (!dispatched) {
                 gestureFailedCount += 1
+                persistRuntimeMetrics()
+                updateOverlayStatus()
                 clearGestureInFlight(gestureToken)
             } else {
                 gestureSentCount += 1
+                persistRuntimeMetrics()
+                updateOverlayStatus()
             }
             return dispatched
         }
@@ -541,9 +704,13 @@ class RideAcceptService : AccessibilityService() {
         }.getOrDefault(false)
         if (!dispatched) {
             gestureFailedCount += 1
+            persistRuntimeMetrics()
+            updateOverlayStatus()
             clearGestureInFlight(gestureToken)
         } else {
             gestureSentCount += 1
+            persistRuntimeMetrics()
+            updateOverlayStatus()
         }
         if (dispatched) {
             Log.d(TAG, "[$windowType] Swipe gesture dispatched")
@@ -566,6 +733,8 @@ class RideAcceptService : AccessibilityService() {
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
                 gestureFailedCount += 1
+                persistRuntimeMetrics()
+                updateOverlayStatus()
                 clearGestureInFlight(gestureToken)
                 Log.e(TAG, "[$windowType] Gesture failed")
             }
@@ -627,6 +796,8 @@ class RideAcceptService : AccessibilityService() {
         lastActionAtMs = System.currentTimeMillis()
         lastActionSignature = actionSignature
         offerAcceptedCount += 1
+        persistRuntimeMetrics()
+        updateOverlayStatus()
         Log.d(
             TAG,
             "Action metrics: seen=$offerSeenCount accepted=$offerAcceptedCount gestureSent=$gestureSentCount gestureFailed=$gestureFailedCount"
@@ -637,6 +808,8 @@ class RideAcceptService : AccessibilityService() {
         if (actionSignature == lastSeenOfferSignature) return
         lastSeenOfferSignature = actionSignature
         offerSeenCount += 1
+        persistRuntimeMetrics()
+        updateOverlayStatus()
         Log.d(TAG, "[$windowType] Offer seen #$offerSeenCount fare=$fare distance=$distance signature=$actionSignature")
     }
 
@@ -661,6 +834,39 @@ class RideAcceptService : AccessibilityService() {
         }
     }
 
+    private fun maybeLogFilterRejected(windowType: String, fare: Double, distance: Double) {
+        val now = System.currentTimeMillis()
+        val farePerKm = if (distance > 0.0) fare / distance else 0.0
+        val reason = when {
+            fare < filterEngine.minFare -> "fare-below-min"
+            fare > filterEngine.maxFare -> "fare-above-max"
+            distance <= 0.0 && !filterEngine.allowFareOnlyWhenDistanceMissing -> "distance-missing-not-allowed"
+            distance > 0.0 && distance < filterEngine.minDistance -> "distance-below-min"
+            distance > 0.0 && distance > filterEngine.maxDistance -> "distance-above-max"
+            distance > 0.0 && farePerKm < filterEngine.minFarePerKm -> "fare-per-km-below-min"
+            else -> "unknown"
+        }
+        val snapshot = String.format(
+            Locale.US,
+            "%s|fare=%.2f|distance=%.2f|fpk=%.2f|minFare=%.2f|maxFare=%.2f|minDist=%.2f|maxDist=%.2f|minFpk=%.2f|allowNoDist=%s",
+            reason,
+            fare,
+            distance,
+            farePerKm,
+            filterEngine.minFare,
+            filterEngine.maxFare,
+            filterEngine.minDistance,
+            filterEngine.maxDistance,
+            filterEngine.minFarePerKm,
+            filterEngine.allowFareOnlyWhenDistanceMissing
+        )
+        if (snapshot != lastFilterRejectSnapshot || now - lastFilterRejectLogAtMs >= FILTER_REJECT_LOG_THROTTLE_MS) {
+            lastFilterRejectSnapshot = snapshot
+            lastFilterRejectLogAtMs = now
+            Log.d(TAG, "[$windowType] Offer rejected by filters -> $snapshot")
+        }
+    }
+
     private fun isEventDataFresh(): Boolean {
         return System.currentTimeMillis() - lastEventDataAtMs <= EVENT_DATA_TTL_MS
     }
@@ -675,7 +881,7 @@ class RideAcceptService : AccessibilityService() {
         }
         event.contentDescription?.toString()?.let { candidates.add(it) }
         event.source?.let { source ->
-            val sourceText = extractNodeText(source)
+            val sourceText = extractNodeSubtreeText(source, maxDepth = 2)
             if (sourceText.isNotBlank()) {
                 candidates.add(sourceText)
             }
@@ -697,6 +903,7 @@ class RideAcceptService : AccessibilityService() {
             if (bestFare > 0.0) lastEventFare = bestFare
             if (bestDistance > 0.0) lastEventDistance = bestDistance
             lastEventDataAtMs = System.currentTimeMillis()
+            Log.d(TAG, "Event cache updated fare=$lastEventFare distance=$lastEventDistance")
         }
     }
 
@@ -847,7 +1054,10 @@ class RideAcceptService : AccessibilityService() {
         if (width <= 0 || height <= 0) return
         if (width < 260 || height < 48 || height > 420) return
 
-        val text = extractNodeText(node).lowercase().trim()
+        var text = extractNodeText(node).lowercase().trim()
+        if (text.isBlank()) {
+            text = extractNodeSubtreeText(node, maxDepth = 1).lowercase().trim()
+        }
         if (text.contains("home") || text.contains("orders") || text.contains("earnings") || text.contains("quick actions")) {
             return
         }
@@ -990,6 +1200,26 @@ class RideAcceptService : AccessibilityService() {
 
     private fun extractNodeText(node: AccessibilityNodeInfo): String {
         return node.text?.toString() ?: node.contentDescription?.toString() ?: ""
+    }
+
+    private fun extractNodeSubtreeText(node: AccessibilityNodeInfo?, maxDepth: Int): String {
+        if (node == null || maxDepth < 0) return ""
+        val out = StringBuilder()
+
+        fun collect(current: AccessibilityNodeInfo?, depth: Int) {
+            if (current == null || depth > maxDepth || out.length > 512) return
+            val text = extractNodeText(current).trim()
+            if (text.isNotEmpty()) {
+                if (out.isNotEmpty()) out.append(' ')
+                out.append(text)
+            }
+            for (i in 0 until current.childCount) {
+                collect(current.getChild(i), depth + 1)
+            }
+        }
+
+        collect(node, 0)
+        return out.toString()
     }
 
     private fun windowTypeToString(windowType: Int): String {

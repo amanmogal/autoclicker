@@ -23,7 +23,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var minFarePerKmInput: TextInputEditText
     private lateinit var saveButton: Button
     private lateinit var openAccessibilityButton: Button
+    private lateinit var recenterOverlayButton: Button
     private lateinit var statusLabel: TextView
+    private lateinit var runtimeStatsLabel: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +39,9 @@ class MainActivity : AppCompatActivity() {
         minFarePerKmInput = findViewById(R.id.minFarePerKmInput)
         saveButton = findViewById(R.id.saveButton)
         openAccessibilityButton = findViewById(R.id.openAccessibilityButton)
+        recenterOverlayButton = findViewById(R.id.recenterOverlayButton)
         statusLabel = findViewById(R.id.statusLabel)
+        runtimeStatsLabel = findViewById(R.id.runtimeStatsLabel)
 
         loadSettings()
         refreshStatusLabel()
@@ -50,6 +54,16 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             startActivity(intent)
         }
+
+        recenterOverlayButton.setOnClickListener {
+            val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putInt(AppPrefsKeys.KEY_OVERLAY_X, 0)
+                .putInt(AppPrefsKeys.KEY_OVERLAY_Y, 100)
+                .apply()
+            Toast.makeText(this, getString(R.string.overlay_recentered), Toast.LENGTH_SHORT).show()
+            refreshStatusLabel()
+        }
     }
 
     override fun onResume() {
@@ -58,8 +72,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        val prefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE)
-        masterSwitch.isChecked = readBooleanPref(prefs, "serviceEnabled", "service_enabled", true)
+        val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        masterSwitch.isChecked = readBooleanPref(
+            prefs,
+            AppPrefsKeys.KEY_SERVICE_ENABLED,
+            AppPrefsKeys.KEY_SERVICE_ENABLED_LEGACY,
+            true
+        )
         minFareInput.setText(readFloatPref(prefs, "minFare", "min_fare", 100.0f).toString())
         maxFareInput.setText(readFloatPref(prefs, "maxFare", "max_fare", 5000.0f).toString())
         minDistanceInput.setText(readFloatPref(prefs, "minDistance", "min_pickup_km", 0.0f).toString())
@@ -68,7 +87,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveSettings() {
-        val prefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
 
         try {
@@ -83,7 +102,8 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            editor.putBoolean("serviceEnabled", masterSwitch.isChecked)
+            editor.putBoolean(AppPrefsKeys.KEY_SERVICE_ENABLED, masterSwitch.isChecked)
+            editor.putBoolean(AppPrefsKeys.KEY_SERVICE_ENABLED_LEGACY, masterSwitch.isChecked)
             editor.putFloat("minFare", minFareStr.toFloat())
             editor.putFloat("maxFare", maxFareStr.toFloat())
             editor.putFloat("minDistance", minDistanceStr.toFloat())
@@ -111,6 +131,23 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.accessibility_disabled)
         }
         statusLabel.text = getString(R.string.status_format, mode, accessibility)
+
+        val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
+        val seen = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, 0L)
+        val accepted = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, 0L)
+        val gestureSent = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, 0L)
+        val gestureFailed = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, 0L)
+        val overlayX = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_X, 0)
+        val overlayY = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_Y, 100)
+        runtimeStatsLabel.text = getString(
+            R.string.runtime_stats_format,
+            seen,
+            accepted,
+            gestureSent,
+            gestureFailed,
+            overlayX,
+            overlayY
+        )
     }
 
     private fun isServiceEnabled(): Boolean {

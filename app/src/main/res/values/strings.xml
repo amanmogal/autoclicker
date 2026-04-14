@@ -11,8 +11,14 @@
     <string name="mode_off">Auto-Accept OFF</string>
     <string name="overlay_status_on">AUTO ON</string>
     <string name="overlay_status_off">AUTO OFF</string>
+    <string name="overlay_status_format">%1$s • A:%2$d F:%3$d</string>
+    <string name="overlay_status_accessibility">%1$s. Accepted %2$d rides. Gesture failures %3$d.</string>
+    <string name="overlay_mode_enabled_announce">Auto-accept enabled from overlay</string>
+    <string name="overlay_mode_disabled_announce">Auto-accept disabled from overlay</string>
     <string name="accessibility_enabled">Enabled</string>
     <string name="accessibility_disabled">Disabled</string>
+    <string name="runtime_stats_placeholder">Stats: waiting for ride metrics</string>
+    <string name="runtime_stats_format">Stats: seen %1$d • accepted %2$d • gestures %3$d • failed %4$d • bubble (%5$d,%6$d)</string>
     <string name="overlay_help_text">Hover Control: drag bubble to move, tap to toggle Auto-Accept, long-press to open app.</string>
     <string name="scope_text">Scope: Driver apps only (Rapido, Ola, Uber, Namma, Yatri). Customer apps are ignored.</string>
     <string name="behavior_text">Behavior: scans ride-request screens, extracts fare and distance, and auto-clicks Accept/Swipe only when filters pass.</string>
@@ -25,4 +31,6 @@
     <string name="hint_min_fare_per_km">Minimum Fare Per KM (₹)</string>
     <string name="save_filters">Save Filters</string>
     <string name="open_accessibility">Open Accessibility Settings</string>
+    <string name="recenter_overlay">Recenter Overlay Bubble</string>
+    <string name="overlay_recentered">Overlay position reset. Reopen service if bubble does not move instantly.</string>
 </resources>
