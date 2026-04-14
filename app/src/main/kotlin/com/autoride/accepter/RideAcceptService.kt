@@ -41,6 +41,15 @@ class RideAcceptService : AccessibilityService() {
     private var lastEventFare = 0.0
     private var lastEventDistance = 0.0
     private var lastEventDataAtMs = 0L
+    private var lastRideEventPackage: String? = null
+    private var gestureInFlight = false
+    private var lastGestureStartedAtMs = 0L
+    private var gestureTokenCounter = 0L
+    private var lastSeenOfferSignature: String? = null
+    private var offerSeenCount = 0L
+    private var offerAcceptedCount = 0L
+    private var gestureSentCount = 0L
+    private var gestureFailedCount = 0L
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -62,7 +71,10 @@ class RideAcceptService : AccessibilityService() {
         private const val OVERLAY_TOGGLE_DEBOUNCE_MS = 700L
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
-        private const val EVENT_DATA_TTL_MS = 2500L
+        private const val EVENT_DATA_TTL_MS = 500L
+        private const val GESTURE_INFLIGHT_TIMEOUT_MS = 1200L
+        private const val FALLBACK_MIN_SCORE_WITH_DISTANCE = 7
+        private const val FALLBACK_MIN_SCORE_DISTANCE_MISSING = 10
 
         private val ACCEPT_KEYWORDS = setOf(
             // Keep this strict to avoid false positives like "Go To".
@@ -282,6 +294,7 @@ class RideAcceptService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             updateSettings()
+            clearEventDataCache("window-state-change")
         }
 
         if (!isAutoAcceptEnabled) return
@@ -289,6 +302,10 @@ class RideAcceptService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         if (!isRideApp(packageName)) return
+        if (packageName != lastRideEventPackage) {
+            lastRideEventPackage = packageName
+            clearEventDataCache("ride-package-change")
+        }
         captureEventData(event)
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -344,9 +361,21 @@ class RideAcceptService : AccessibilityService() {
         }
 
         if (scraperData.targetNode == null && scraperData.fare > 0.0 && scraperData.fallbackTargetNode != null) {
-            scraperData.targetNode = scraperData.fallbackTargetNode
-            scraperData.isSwipe = true
-            Log.d(TAG, "[$windowType] Using fallback clickable target (score=${scraperData.fallbackTargetScore})")
+            val requiredScore = if (scraperData.distance > 0.0) {
+                FALLBACK_MIN_SCORE_WITH_DISTANCE
+            } else {
+                FALLBACK_MIN_SCORE_DISTANCE_MISSING
+            }
+            if (scraperData.fallbackTargetScore >= requiredScore) {
+                scraperData.targetNode = scraperData.fallbackTargetNode
+                scraperData.isSwipe = true
+                Log.d(TAG, "[$windowType] Using fallback clickable target (score=${scraperData.fallbackTargetScore})")
+            } else {
+                Log.d(
+                    TAG,
+                    "[$windowType] Fallback target rejected (score=${scraperData.fallbackTargetScore}, required=$requiredScore)"
+                )
+            }
         }
 
         val targetNode = scraperData.targetNode ?: run {
@@ -360,6 +389,7 @@ class RideAcceptService : AccessibilityService() {
 
         if (!filterEngine.shouldAccept(fare, distance)) return
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
+        recordOfferSeen(windowType, actionSignature, fare, distance)
         if (!canAttemptAction(actionSignature)) return
 
         Log.d(TAG, "[$windowType] Acceptance Logic Match - Triggering Automation")
@@ -446,13 +476,24 @@ class RideAcceptService : AccessibilityService() {
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
         if (bounds.width() > 0 && bounds.height() > 0) {
-            val path = Path().apply {
-                moveTo(bounds.centerX().toFloat(), bounds.centerY().toFloat())
+            val safeX = max(0f, bounds.centerX().toFloat())
+            val safeY = max(0f, bounds.centerY().toFloat())
+            val gestureToken = beginGestureDispatch(windowType) ?: return false
+            val dispatched = runCatching {
+                val path = Path().apply { moveTo(safeX, safeY) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 1))
+                    .build()
+                dispatchGesture(gesture, gestureCallback(windowType, gestureToken), null)
+            }.onFailure { error ->
+                Log.e(TAG, "[$windowType] Tap gesture creation failed", error)
+            }.getOrDefault(false)
+            if (!dispatched) {
+                gestureFailedCount += 1
+                clearGestureInFlight(gestureToken)
+            } else {
+                gestureSentCount += 1
             }
-            val gesture = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, 1))
-                .build()
-            val dispatched = dispatchGesture(gesture, gestureCallback(windowType), null)
             if (dispatched) {
                 markActionExecuted(actionSignature)
             }
@@ -478,19 +519,35 @@ class RideAcceptService : AccessibilityService() {
             return clickNode(node, windowType, actionSignature)
         }
 
-        val startX = bounds.left + (bounds.width() * 0.2f)
-        val endX = bounds.right - (bounds.width() * 0.2f)
-        val y = bounds.centerY().toFloat()
-
-        val path = Path().apply {
-            moveTo(startX, y)
-            lineTo(endX, y)
+        val rawStartX = bounds.left + (bounds.width() * 0.2f)
+        val rawEndX = bounds.right - (bounds.width() * 0.2f)
+        val safeStartX = max(0f, rawStartX)
+        val safeEndX = max(0f, rawEndX)
+        val safeY = max(0f, bounds.centerY().toFloat())
+        if (safeEndX <= safeStartX + 1f) {
+            Log.w(TAG, "[$windowType] Swipe bounds invalid, falling back to click")
+            return clickNode(node, windowType, actionSignature)
         }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 200))
-            .build()
+        val gestureToken = beginGestureDispatch(windowType) ?: return false
 
-        val dispatched = dispatchGesture(gesture, gestureCallback(windowType), null)
+        val dispatched = runCatching {
+            val path = Path().apply {
+                moveTo(safeStartX, safeY)
+                lineTo(safeEndX, safeY)
+            }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 200))
+                .build()
+            dispatchGesture(gesture, gestureCallback(windowType, gestureToken), null)
+        }.onFailure { error ->
+            Log.e(TAG, "[$windowType] Swipe gesture creation failed", error)
+        }.getOrDefault(false)
+        if (!dispatched) {
+            gestureFailedCount += 1
+            clearGestureInFlight(gestureToken)
+        } else {
+            gestureSentCount += 1
+        }
         if (dispatched) {
             markActionExecuted(actionSignature)
             Log.d(TAG, "[$windowType] Swipe gesture dispatched")
@@ -499,15 +556,39 @@ class RideAcceptService : AccessibilityService() {
         return clickNode(node, windowType, actionSignature)
     }
 
-    private fun gestureCallback(windowType: String): GestureResultCallback {
+    private fun gestureCallback(windowType: String, gestureToken: Long): GestureResultCallback {
         return object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
+                clearGestureInFlight(gestureToken)
                 Log.d(TAG, "[$windowType] Gesture success")
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
+                gestureFailedCount += 1
+                clearGestureInFlight(gestureToken)
                 Log.e(TAG, "[$windowType] Gesture failed")
             }
+        }
+    }
+
+    private fun beginGestureDispatch(windowType: String): Long? {
+        val now = System.currentTimeMillis()
+        if (gestureInFlight) {
+            if (now - lastGestureStartedAtMs <= GESTURE_INFLIGHT_TIMEOUT_MS) {
+                Log.d(TAG, "[$windowType] Gesture skipped: previous gesture in-flight")
+                return null
+            }
+            Log.w(TAG, "[$windowType] Clearing stale in-flight gesture lock")
+        }
+        gestureInFlight = true
+        lastGestureStartedAtMs = now
+        gestureTokenCounter += 1
+        return gestureTokenCounter
+    }
+
+    private fun clearGestureInFlight(gestureToken: Long) {
+        if (gestureToken == gestureTokenCounter) {
+            gestureInFlight = false
         }
     }
 
@@ -530,15 +611,32 @@ class RideAcceptService : AccessibilityService() {
     ): String {
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
-        val label = extractNodeText(node).lowercase().trim().ifBlank { "<no-text>" }
-        val fareBucket = String.format(Locale.US, "%.0f", fare)
-        val distanceBucket = String.format(Locale.US, "%.1f", distance)
-        return "$windowType|$label|$fareBucket|$distanceBucket|${bounds.centerX()}|${bounds.centerY()}"
+        return ActionSignature.build(
+            windowType = windowType,
+            label = extractNodeText(node),
+            fare = fare,
+            distance = distance,
+            centerX = bounds.centerX(),
+            centerY = bounds.centerY(),
+            viewId = node.viewIdResourceName
+        )
     }
 
     private fun markActionExecuted(actionSignature: String) {
         lastActionAtMs = System.currentTimeMillis()
         lastActionSignature = actionSignature
+        offerAcceptedCount += 1
+        Log.d(
+            TAG,
+            "Action metrics: seen=$offerSeenCount accepted=$offerAcceptedCount gestureSent=$gestureSentCount gestureFailed=$gestureFailedCount"
+        )
+    }
+
+    private fun recordOfferSeen(windowType: String, actionSignature: String, fare: Double, distance: Double) {
+        if (actionSignature == lastSeenOfferSignature) return
+        lastSeenOfferSignature = actionSignature
+        offerSeenCount += 1
+        Log.d(TAG, "[$windowType] Offer seen #$offerSeenCount fare=$fare distance=$distance signature=$actionSignature")
     }
 
     private fun maybeLogScrapedData(windowType: String, fare: Double, distance: Double) {
@@ -599,6 +697,15 @@ class RideAcceptService : AccessibilityService() {
             if (bestDistance > 0.0) lastEventDistance = bestDistance
             lastEventDataAtMs = System.currentTimeMillis()
         }
+    }
+
+    private fun clearEventDataCache(reason: String) {
+        if (lastEventFare > 0.0 || lastEventDistance > 0.0) {
+            Log.d(TAG, "Clearing cached event data ($reason)")
+        }
+        lastEventFare = 0.0
+        lastEventDistance = 0.0
+        lastEventDataAtMs = 0L
     }
 
     private fun findAcceptNodeByText(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
