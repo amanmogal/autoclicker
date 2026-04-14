@@ -12,6 +12,7 @@ internal object AppPrefsKeys {
 
     const val KEY_METRIC_OFFERS_SEEN = "metric_offers_seen"
     const val KEY_METRIC_OFFERS_ACCEPTED = "metric_offers_accepted"
+    const val KEY_METRIC_OFFERS_REJECTED = "metric_offers_rejected"
     const val KEY_METRIC_GESTURE_SENT = "metric_gesture_sent"
     const val KEY_METRIC_GESTURE_FAILED = "metric_gesture_failed"
 }

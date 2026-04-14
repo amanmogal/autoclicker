@@ -50,10 +50,15 @@ class RideAcceptService : AccessibilityService() {
     private var lastGestureStartedAtMs = 0L
     private var gestureTokenCounter = 0L
     private var lastSeenOfferSignature: String? = null
+    private var lastRejectedOfferSignature: String? = null
     private var offerSeenCount = 0L
     private var offerAcceptedCount = 0L
+    private var offerRejectedCount = 0L
     private var gestureSentCount = 0L
     private var gestureFailedCount = 0L
+    private var lastOverlayLabel: String? = null
+    private var lastOverlayContentDescription: String? = null
+    private var lastOverlayEnabledState: Boolean? = null
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -161,6 +166,7 @@ class RideAcceptService : AccessibilityService() {
         params.y = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_Y, OVERLAY_DEFAULT_Y)
 
         overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_status, null)
+        overlayView?.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         overlayLayoutParams = params
         attachOverlayTouchController()
         runCatching {
@@ -277,28 +283,44 @@ class RideAcceptService : AccessibilityService() {
         overlayView?.let {
             val icon = it.findViewById<ImageView>(R.id.statusIcon)
             val statusText = it.findViewById<TextView>(R.id.statusText)
-            if (isAutoAcceptEnabled) {
-                icon.setColorFilter(Color.GREEN)
-                it.background.setTint(Color.parseColor("#CC000000"))
-            } else {
-                icon.setColorFilter(Color.RED)
-                it.background.setTint(Color.parseColor("#CC444444"))
+            if (lastOverlayEnabledState != isAutoAcceptEnabled) {
+                if (isAutoAcceptEnabled) {
+                    icon.setColorFilter(Color.GREEN)
+                    it.background.setTint(Color.parseColor("#CC000000"))
+                } else {
+                    icon.setColorFilter(Color.RED)
+                    it.background.setTint(Color.parseColor("#CC444444"))
+                }
+                lastOverlayEnabledState = isAutoAcceptEnabled
             }
             val state = if (isAutoAcceptEnabled) {
                 getString(R.string.overlay_status_on)
             } else {
                 getString(R.string.overlay_status_off)
             }
-            val label = getString(R.string.overlay_status_format, state, offerAcceptedCount, gestureFailedCount)
-            statusText.text = label
+            val label = getString(
+                R.string.overlay_status_format,
+                state,
+                offerAcceptedCount,
+                offerRejectedCount,
+                gestureFailedCount
+            )
+            if (label != lastOverlayLabel) {
+                statusText.text = label
+                lastOverlayLabel = label
+            }
             val contentDescription = getString(
                 R.string.overlay_status_accessibility,
                 state,
                 offerAcceptedCount,
+                offerRejectedCount,
                 gestureFailedCount
             )
-            statusText.contentDescription = contentDescription
-            it.contentDescription = contentDescription
+            if (contentDescription != lastOverlayContentDescription) {
+                statusText.contentDescription = contentDescription
+                it.contentDescription = contentDescription
+                lastOverlayContentDescription = contentDescription
+            }
         }
     }
 
@@ -336,6 +358,7 @@ class RideAcceptService : AccessibilityService() {
         val prefs = settingsPrefs ?: return
         offerSeenCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, 0L)
         offerAcceptedCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, 0L)
+        offerRejectedCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_REJECTED, 0L)
         gestureSentCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, 0L)
         gestureFailedCount = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, 0L)
     }
@@ -345,6 +368,7 @@ class RideAcceptService : AccessibilityService() {
         prefs.edit()
             .putLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, offerSeenCount)
             .putLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, offerAcceptedCount)
+            .putLong(AppPrefsKeys.KEY_METRIC_OFFERS_REJECTED, offerRejectedCount)
             .putLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, gestureSentCount)
             .putLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, gestureFailedCount)
             .apply()
@@ -542,13 +566,15 @@ class RideAcceptService : AccessibilityService() {
         val distance = scraperData.distance
 
         maybeLogScrapedData(windowType, fare, distance)
-
-        if (!filterEngine.shouldAccept(fare, distance)) {
-            maybeLogFilterRejected(windowType, fare, distance)
-            return
-        }
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
         recordOfferSeen(windowType, actionSignature, fare, distance)
+
+        if (!filterEngine.shouldAccept(fare, distance)) {
+            val reason = computeFilterRejectReason(fare, distance)
+            recordOfferRejected(windowType, actionSignature, fare, distance, reason)
+            maybeLogFilterRejected(windowType, fare, distance, actionSignature, reason)
+            return
+        }
         if (!canAttemptAction(actionSignature)) return
 
         Log.d(TAG, "[$windowType] Acceptance Logic Match - Triggering Automation")
@@ -800,7 +826,7 @@ class RideAcceptService : AccessibilityService() {
         updateOverlayStatus()
         Log.d(
             TAG,
-            "Action metrics: seen=$offerSeenCount accepted=$offerAcceptedCount gestureSent=$gestureSentCount gestureFailed=$gestureFailedCount"
+            "FLAG_ACCEPTED signature=$actionSignature accepted=$offerAcceptedCount rejected=$offerRejectedCount seen=$offerSeenCount"
         )
     }
 
@@ -811,6 +837,24 @@ class RideAcceptService : AccessibilityService() {
         persistRuntimeMetrics()
         updateOverlayStatus()
         Log.d(TAG, "[$windowType] Offer seen #$offerSeenCount fare=$fare distance=$distance signature=$actionSignature")
+    }
+
+    private fun recordOfferRejected(
+        windowType: String,
+        actionSignature: String,
+        fare: Double,
+        distance: Double,
+        reason: String
+    ) {
+        if (actionSignature == lastRejectedOfferSignature) return
+        lastRejectedOfferSignature = actionSignature
+        offerRejectedCount += 1
+        persistRuntimeMetrics()
+        updateOverlayStatus()
+        Log.d(
+            TAG,
+            "[$windowType] FLAG_REJECTED #$offerRejectedCount reason=$reason fare=$fare distance=$distance signature=$actionSignature"
+        )
     }
 
     private fun maybeLogScrapedData(windowType: String, fare: Double, distance: Double) {
@@ -834,22 +878,20 @@ class RideAcceptService : AccessibilityService() {
         }
     }
 
-    private fun maybeLogFilterRejected(windowType: String, fare: Double, distance: Double) {
+    private fun maybeLogFilterRejected(
+        windowType: String,
+        fare: Double,
+        distance: Double,
+        actionSignature: String,
+        reason: String
+    ) {
         val now = System.currentTimeMillis()
         val farePerKm = if (distance > 0.0) fare / distance else 0.0
-        val reason = when {
-            fare < filterEngine.minFare -> "fare-below-min"
-            fare > filterEngine.maxFare -> "fare-above-max"
-            distance <= 0.0 && !filterEngine.allowFareOnlyWhenDistanceMissing -> "distance-missing-not-allowed"
-            distance > 0.0 && distance < filterEngine.minDistance -> "distance-below-min"
-            distance > 0.0 && distance > filterEngine.maxDistance -> "distance-above-max"
-            distance > 0.0 && farePerKm < filterEngine.minFarePerKm -> "fare-per-km-below-min"
-            else -> "unknown"
-        }
         val snapshot = String.format(
             Locale.US,
-            "%s|fare=%.2f|distance=%.2f|fpk=%.2f|minFare=%.2f|maxFare=%.2f|minDist=%.2f|maxDist=%.2f|minFpk=%.2f|allowNoDist=%s",
+            "%s|sig=%s|fare=%.2f|distance=%.2f|fpk=%.2f|minFare=%.2f|maxFare=%.2f|minDist=%.2f|maxDist=%.2f|minFpk=%.2f|allowNoDist=%s",
             reason,
+            actionSignature,
             fare,
             distance,
             farePerKm,
@@ -864,6 +906,19 @@ class RideAcceptService : AccessibilityService() {
             lastFilterRejectSnapshot = snapshot
             lastFilterRejectLogAtMs = now
             Log.d(TAG, "[$windowType] Offer rejected by filters -> $snapshot")
+        }
+    }
+
+    private fun computeFilterRejectReason(fare: Double, distance: Double): String {
+        val farePerKm = if (distance > 0.0) fare / distance else 0.0
+        return when {
+            fare < filterEngine.minFare -> "fare-below-min"
+            fare > filterEngine.maxFare -> "fare-above-max"
+            distance <= 0.0 && !filterEngine.allowFareOnlyWhenDistanceMissing -> "distance-missing-not-allowed"
+            distance > 0.0 && distance < filterEngine.minDistance -> "distance-below-min"
+            distance > 0.0 && distance > filterEngine.maxDistance -> "distance-above-max"
+            distance > 0.0 && farePerKm < filterEngine.minFarePerKm -> "fare-per-km-below-min"
+            else -> "unknown"
         }
     }
 

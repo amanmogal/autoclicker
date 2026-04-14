@@ -135,6 +135,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences(AppPrefsKeys.PREFS_NAME, Context.MODE_PRIVATE)
         val seen = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_SEEN, 0L)
         val accepted = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_ACCEPTED, 0L)
+        val rejected = prefs.getLong(AppPrefsKeys.KEY_METRIC_OFFERS_REJECTED, 0L)
         val gestureSent = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_SENT, 0L)
         val gestureFailed = prefs.getLong(AppPrefsKeys.KEY_METRIC_GESTURE_FAILED, 0L)
         val overlayX = prefs.getInt(AppPrefsKeys.KEY_OVERLAY_X, 0)
@@ -143,6 +144,7 @@ class MainActivity : AppCompatActivity() {
             R.string.runtime_stats_format,
             seen,
             accepted,
+            rejected,
             gestureSent,
             gestureFailed,
             overlayX,
