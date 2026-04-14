@@ -40,6 +40,7 @@ class RideAcceptService : AccessibilityService() {
     private var lastProcessAtMs = 0L
     private var lastOverlayToggleAtMs = 0L
     private var lastNoTargetLogAtMs = 0L
+    private var lastMissingMetricsLogAtMs = 0L
     private var lastFilterRejectLogAtMs = 0L
     private var lastFilterRejectSnapshot: String? = null
     private var lastEventFare = 0.0
@@ -82,6 +83,7 @@ class RideAcceptService : AccessibilityService() {
         private const val OVERLAY_TOGGLE_DEBOUNCE_MS = 700L
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
+        private const val MISSING_METRICS_LOG_THROTTLE_MS = 2000L
         private const val FILTER_REJECT_LOG_THROTTLE_MS = 1500L
         private const val EVENT_DATA_TTL_MS = 2200L
         private const val GESTURE_INFLIGHT_TIMEOUT_MS = 1200L
@@ -567,6 +569,11 @@ class RideAcceptService : AccessibilityService() {
 
         maybeLogScrapedData(windowType, fare, distance)
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
+        val hasMeaningfulMetrics = fare > 0.0 || distance > 0.0
+        if (!hasMeaningfulMetrics) {
+            maybeLogMissingMetrics(windowType, actionSignature)
+            return
+        }
         recordOfferSeen(windowType, actionSignature, fare, distance)
 
         if (!filterEngine.shouldAccept(fare, distance)) {
@@ -875,6 +882,14 @@ class RideAcceptService : AccessibilityService() {
                 TAG,
                 "[$windowType] No accept target found (fare=${data.fare}, distance=${data.distance})"
             )
+        }
+    }
+
+    private fun maybeLogMissingMetrics(windowType: String, actionSignature: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastMissingMetricsLogAtMs >= MISSING_METRICS_LOG_THROTTLE_MS) {
+            lastMissingMetricsLogAtMs = now
+            Log.d(TAG, "[$windowType] Candidate ignored: missing fare/distance metrics (signature=$actionSignature)")
         }
     }
 
