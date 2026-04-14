@@ -484,7 +484,7 @@ class RideAcceptService : AccessibilityService() {
                 val gesture = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, 1))
                     .build()
-                dispatchGesture(gesture, gestureCallback(windowType, gestureToken), null)
+                dispatchGesture(gesture, gestureCallback(windowType, gestureToken, actionSignature), null)
             }.onFailure { error ->
                 Log.e(TAG, "[$windowType] Tap gesture creation failed", error)
             }.getOrDefault(false)
@@ -493,9 +493,6 @@ class RideAcceptService : AccessibilityService() {
                 clearGestureInFlight(gestureToken)
             } else {
                 gestureSentCount += 1
-            }
-            if (dispatched) {
-                markActionExecuted(actionSignature)
             }
             return dispatched
         }
@@ -538,7 +535,7 @@ class RideAcceptService : AccessibilityService() {
             val gesture = GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, 200))
                 .build()
-            dispatchGesture(gesture, gestureCallback(windowType, gestureToken), null)
+            dispatchGesture(gesture, gestureCallback(windowType, gestureToken, actionSignature), null)
         }.onFailure { error ->
             Log.e(TAG, "[$windowType] Swipe gesture creation failed", error)
         }.getOrDefault(false)
@@ -549,17 +546,21 @@ class RideAcceptService : AccessibilityService() {
             gestureSentCount += 1
         }
         if (dispatched) {
-            markActionExecuted(actionSignature)
             Log.d(TAG, "[$windowType] Swipe gesture dispatched")
             return true
         }
         return clickNode(node, windowType, actionSignature)
     }
 
-    private fun gestureCallback(windowType: String, gestureToken: Long): GestureResultCallback {
+    private fun gestureCallback(
+        windowType: String,
+        gestureToken: Long,
+        actionSignature: String
+    ): GestureResultCallback {
         return object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 clearGestureInFlight(gestureToken)
+                markActionExecuted(actionSignature)
                 Log.d(TAG, "[$windowType] Gesture success")
             }
 
