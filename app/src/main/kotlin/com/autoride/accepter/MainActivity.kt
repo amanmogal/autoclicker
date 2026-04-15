@@ -83,12 +83,35 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
+            val minFare = minFareStr.toFloat()
+            val maxFare = maxFareStr.toFloat()
+            val minDistance = minDistanceStr.toFloat()
+            val maxDistance = maxDistanceStr.toFloat()
+            val minFarePerKm = minFarePerKmStr.toFloat()
+
+            if (!minFare.isFinite() || !maxFare.isFinite() || !minDistance.isFinite() || !maxDistance.isFinite() || !minFarePerKm.isFinite()) {
+                Toast.makeText(this, "Invalid numeric value detected.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (minFare < 0f || maxFare < 0f || minDistance < 0f || maxDistance < 0f || minFarePerKm < 0f) {
+                Toast.makeText(this, "Values must be zero or greater.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (minFare > maxFare) {
+                Toast.makeText(this, "Min fare must be less than or equal to max fare.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (minDistance > maxDistance) {
+                Toast.makeText(this, "Min distance must be less than or equal to max distance.", Toast.LENGTH_SHORT).show()
+                return
+            }
+
             editor.putBoolean("serviceEnabled", masterSwitch.isChecked)
-            editor.putFloat("minFare", minFareStr.toFloat())
-            editor.putFloat("maxFare", maxFareStr.toFloat())
-            editor.putFloat("minDistance", minDistanceStr.toFloat())
-            editor.putFloat("maxDistance", maxDistanceStr.toFloat())
-            editor.putFloat("minFarePerKm", minFarePerKmStr.toFloat())
+            editor.putFloat("minFare", minFare)
+            editor.putFloat("maxFare", maxFare)
+            editor.putFloat("minDistance", minDistance)
+            editor.putFloat("maxDistance", maxDistance)
+            editor.putFloat("minFarePerKm", minFarePerKm)
             editor.apply()
             refreshStatusLabel()
 
