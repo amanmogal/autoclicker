@@ -19,13 +19,193 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent" />
 
+        <TextView
+            android:id="@+id/authHeader"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/auth_section_title"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/titleLabel" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/accountNameLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/hint_name"
+            app:layout_constraintTop_toBottomOf="@id/authHeader">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/accountNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPersonName" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/accountEmailLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/hint_email"
+            app:layout_constraintTop_toBottomOf="@id/accountNameLayout">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/accountEmailInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textEmailAddress" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/accountPasswordLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/hint_password"
+            app:layout_constraintTop_toBottomOf="@id/accountEmailLayout">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/accountPasswordInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPassword" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <LinearLayout
+            android:id="@+id/authButtonRow"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/accountPasswordLayout">
+
+            <Button
+                android:id="@+id/registerButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/register_button" />
+
+            <View
+                android:layout_width="8dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/loginButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/login_button" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/refreshSubscriptionButton"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/refresh_subscription"
+            app:layout_constraintTop_toBottomOf="@id/authButtonRow" />
+
+        <Button
+            android:id="@+id/logoutButton"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/logout_button"
+            app:layout_constraintTop_toBottomOf="@id/refreshSubscriptionButton" />
+
+        <TextView
+            android:id="@+id/authStatusLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/auth_status_signed_out"
+            android:textColor="#424242"
+            android:textSize="13sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/logoutButton" />
+
+        <TextView
+            android:id="@+id/subscriptionStatusLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/subscription_status_inactive"
+            android:textColor="#424242"
+            android:textSize="13sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/authStatusLabel" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/upiTxnIdLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/hint_upi_transaction_id"
+            app:layout_constraintTop_toBottomOf="@id/subscriptionStatusLabel">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/upiTxnIdInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <LinearLayout
+            android:id="@+id/paymentButtonRow"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/upiTxnIdLayout"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <Button
+                android:id="@+id/upiPaymentButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/pay_with_upi" />
+
+            <View
+                android:layout_width="8dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/verifyPaymentButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/verify_payment" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/paymentStatusLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/payment_status_required"
+            android:textColor="#424242"
+            android:textSize="13sp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/paymentButtonRow" />
+
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/masterSwitch"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/switch_label"
             android:textSize="18sp"
-            app:layout_constraintTop_toBottomOf="@id/titleLabel"
+            app:layout_constraintTop_toBottomOf="@id/paymentStatusLabel"
             app:layout_constraintStart_toStartOf="parent"
             android:layout_marginTop="16dp" />
 

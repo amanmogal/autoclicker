@@ -9,6 +9,8 @@ import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.MotionEvent
 import android.view.Gravity
@@ -41,6 +43,15 @@ class RideAcceptService : AccessibilityService() {
     private var lastEventFare = 0.0
     private var lastEventDistance = 0.0
     private var lastEventDataAtMs = 0L
+    private val scanHandler = Handler(Looper.getMainLooper())
+    private val periodicScanRunnable = object : Runnable {
+        override fun run() {
+            if (!isAutoAcceptEnabled) return
+            runCatching { processAllWindows() }
+                .onFailure { error -> Log.e(TAG, "Periodic scan failed", error) }
+            scanHandler.postDelayed(this, PERIODIC_SCAN_MS)
+        }
+    }
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
@@ -63,6 +74,7 @@ class RideAcceptService : AccessibilityService() {
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
         private const val EVENT_DATA_TTL_MS = 2500L
+        private const val PERIODIC_SCAN_MS = 1000L
 
         private val ACCEPT_KEYWORDS = setOf(
             // Keep this strict to avoid false positives like "Go To".
@@ -120,6 +132,7 @@ class RideAcceptService : AccessibilityService() {
         }
         showOverlay()
         updateSettings()
+        schedulePeriodicScan()
     }
 
     private fun showOverlay() {
@@ -239,11 +252,11 @@ class RideAcceptService : AccessibilityService() {
             val statusText = it.findViewById<TextView>(R.id.statusText)
             if (isAutoAcceptEnabled) {
                 icon.setColorFilter(Color.GREEN)
-                it.background.setTint(Color.parseColor("#CC000000"))
+                it.background?.setTint(Color.parseColor("#CC000000"))
                 statusText.text = getString(R.string.overlay_status_on)
             } else {
                 icon.setColorFilter(Color.RED)
-                it.background.setTint(Color.parseColor("#CC444444"))
+                it.background?.setTint(Color.parseColor("#CC444444"))
                 statusText.text = getString(R.string.overlay_status_off)
             }
         }
@@ -257,6 +270,12 @@ class RideAcceptService : AccessibilityService() {
             "service_enabled",
             true
         )
+        val entitlementActive = SubscriptionManager.hasValidEntitlement(this)
+        val hasAuthToken = prefs.getString("auth_token", null).isNullOrBlank().not()
+        if (!entitlementActive || !hasAuthToken) {
+            isAutoAcceptEnabled = false
+            SubscriptionManager.enforceInactiveState(this)
+        }
 
         filterEngine.minFare = readFloatPref(prefs, "minFare", "min_fare", 100.0f)
         filterEngine.maxFare = readFloatPref(prefs, "maxFare", "max_fare", 5000.0f)
@@ -271,12 +290,17 @@ class RideAcceptService : AccessibilityService() {
         )
 
         val settingsSnapshot =
-            "Enabled=$isAutoAcceptEnabled|Fare=${filterEngine.minFare}-${filterEngine.maxFare}|Distance=${filterEngine.minDistance}-${filterEngine.maxDistance}|MinFarePerKm=${filterEngine.minFarePerKm}|AllowFareOnly=${filterEngine.allowFareOnlyWhenDistanceMissing}"
+            "Enabled=$isAutoAcceptEnabled|Entitled=$entitlementActive|Auth=$hasAuthToken|Fare=${filterEngine.minFare}-${filterEngine.maxFare}|Distance=${filterEngine.minDistance}-${filterEngine.maxDistance}|MinFarePerKm=${filterEngine.minFarePerKm}|AllowFareOnly=${filterEngine.allowFareOnlyWhenDistanceMissing}"
         if (lastSettingsSnapshot != settingsSnapshot) {
             lastSettingsSnapshot = settingsSnapshot
             Log.d(TAG, "Settings Updated: $settingsSnapshot")
         }
         updateOverlayStatus()
+        if (isAutoAcceptEnabled) {
+            schedulePeriodicScan()
+        } else {
+            scanHandler.removeCallbacks(periodicScanRunnable)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -286,9 +310,9 @@ class RideAcceptService : AccessibilityService() {
 
         if (!isAutoAcceptEnabled) return
 
-        val packageName = event.packageName?.toString() ?: return
-
-        if (!isRideApp(packageName)) return
+        val packageName = event.packageName?.toString()
+        val visibleRideWindow = hasRideAppWindow()
+        if ((packageName == null || !isRideApp(packageName)) && !visibleRideWindow) return
         captureEventData(event)
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -297,6 +321,23 @@ class RideAcceptService : AccessibilityService() {
         ) {
             processAllWindows()
         }
+    }
+
+    private fun schedulePeriodicScan() {
+        scanHandler.removeCallbacks(periodicScanRunnable)
+        if (isAutoAcceptEnabled) {
+            scanHandler.postDelayed(periodicScanRunnable, PERIODIC_SCAN_MS)
+        }
+    }
+
+    private fun hasRideAppWindow(): Boolean {
+        val matchedWindow = windows.firstOrNull { window ->
+            val rootPackage = window.root?.packageName?.toString() ?: return@firstOrNull false
+            isRideApp(rootPackage)
+        }
+        if (matchedWindow != null) return true
+        val activePackage = rootInActiveWindow?.packageName?.toString() ?: return false
+        return isRideApp(activePackage)
     }
 
     private fun processAllWindows() {
@@ -898,6 +939,7 @@ class RideAcceptService : AccessibilityService() {
         super.onDestroy()
         settingsPrefs?.unregisterOnSharedPreferenceChangeListener(settingsListener)
         settingsPrefs = null
+        scanHandler.removeCallbacks(periodicScanRunnable)
         overlayView?.let {
             runCatching { windowManager.removeView(it) }
             overlayAttached = false

@@ -1,0 +1,37 @@
+name: Release APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build and copy APK
+        run: ./gradlew --no-daemon app:assembleDebug app:copyApk
+
+      - name: Publish GitHub release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/debug/AutoRideAccepter_Latest.apk
+            release_apk/AutoRideAccepter_Latest.apk
+          generate_release_notes: true

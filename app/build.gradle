@@ -13,6 +13,10 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+        buildConfigField "String", "API_BASE_URL", "\"https://api.afterbook.example/v1/\""
+        buildConfigField "String", "UPI_VPA", "\"afterbook@upi\""
+        buildConfigField "String", "UPI_PAYEE_NAME", "\"Afterbook Technologies\""
+        buildConfigField "String", "UPI_NOTE", "\"AutoRide subscription\""
     }
 
     buildTypes {
@@ -41,6 +45,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    testImplementation 'junit:junit:4.13.2'
 }
 
 task copyApk(type: Copy) {
