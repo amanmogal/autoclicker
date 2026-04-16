@@ -16,27 +16,105 @@
             android:text="@string/title_text"
             android:textSize="24sp"
             android:textStyle="bold"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintStart_toStartOf="parent" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <TextView
+            android:id="@+id/loginHeader"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/login_header"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/titleLabel" />
+
+        <TextView
+            android:id="@+id/loginStatusLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/login_status_logged_out"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/loginHeader" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/loginEmailLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/login_email_hint"
+            app:layout_constraintTop_toBottomOf="@id/loginStatusLabel">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/loginEmailInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textEmailAddress" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/loginPasswordLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/login_password_hint"
+            app:layout_constraintTop_toBottomOf="@id/loginEmailLayout">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/loginPasswordInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPassword" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <LinearLayout
+            android:id="@+id/loginButtonsLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/loginPasswordLayout">
+
+            <Button
+                android:id="@+id/loginButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/login_button" />
+
+            <View
+                android:layout_width="12dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/logoutButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/logout_button" />
+        </LinearLayout>
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/masterSwitch"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:text="@string/switch_label"
             android:textSize="18sp"
-            app:layout_constraintTop_toBottomOf="@id/titleLabel"
             app:layout_constraintStart_toStartOf="parent"
-            android:layout_marginTop="16dp" />
+            app:layout_constraintTop_toBottomOf="@id/loginButtonsLayout" />
 
         <TextView
             android:id="@+id/statusLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/status_waiting"
             android:layout_marginTop="8dp"
-            app:layout_constraintTop_toBottomOf="@id/masterSwitch"
-            app:layout_constraintStart_toStartOf="parent" />
+            android:text="@string/status_waiting"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/masterSwitch" />
 
         <TextView
             android:id="@+id/scopeLabel"
@@ -46,8 +124,8 @@
             android:text="@string/scope_text"
             android:textColor="#616161"
             android:textSize="13sp"
-            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/statusLabel" />
 
         <TextView
@@ -58,8 +136,8 @@
             android:text="@string/behavior_text"
             android:textColor="#616161"
             android:textSize="13sp"
-            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/scopeLabel" />
 
         <TextView
@@ -70,20 +148,69 @@
             android:text="@string/overlay_help_text"
             android:textColor="#616161"
             android:textSize="13sp"
-            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/behaviorLabel" />
 
-        <!-- Price Range -->
+        <TextView
+            android:id="@+id/subscriptionHeader"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/subscription_header"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/overlayHelpLabel" />
+
+        <TextView
+            android:id="@+id/subscriptionStatusLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/subscription_status_inactive"
+            android:textColor="#1B5E20"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/subscriptionHeader" />
+
+        <LinearLayout
+            android:id="@+id/subscriptionPlanButtons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/subscriptionStatusLabel">
+
+            <Button
+                android:id="@+id/monthlyPlanButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/subscription_monthly" />
+
+            <View
+                android:layout_width="12dp"
+                android:layout_height="match_parent" />
+
+            <Button
+                android:id="@+id/yearlyPlanButton"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/subscription_yearly" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/priceHeader"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
             android:text="@string/price_range_title"
             android:textStyle="bold"
-            android:layout_marginTop="24dp"
-            app:layout_constraintTop_toBottomOf="@id/overlayHelpLabel"
-            app:layout_constraintStart_toStartOf="parent" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/subscriptionPlanButtons" />
 
         <LinearLayout
             android:id="@+id/priceLayout"
@@ -97,6 +224,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:hint="@string/hint_min_price">
+
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/minFareInput"
                     android:layout_width="match_parent"
@@ -105,13 +233,16 @@
                     android:text="100" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <View android:layout_width="16dp" android:layout_height="match_parent"/>
+            <View
+                android:layout_width="16dp"
+                android:layout_height="match_parent" />
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:hint="@string/hint_max_price">
+
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/maxFareInput"
                     android:layout_width="match_parent"
@@ -121,16 +252,15 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Distance Range -->
         <TextView
             android:id="@+id/distanceHeader"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:text="@string/distance_range_title"
             android:textStyle="bold"
-            android:layout_marginTop="16dp"
-            app:layout_constraintTop_toBottomOf="@id/priceLayout"
-            app:layout_constraintStart_toStartOf="parent" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/priceLayout" />
 
         <LinearLayout
             android:id="@+id/distanceLayout"
@@ -144,6 +274,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:hint="@string/hint_min_distance">
+
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/minDistanceInput"
                     android:layout_width="match_parent"
@@ -152,13 +283,16 @@
                     android:text="0" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <View android:layout_width="16dp" android:layout_height="match_parent"/>
+            <View
+                android:layout_width="16dp"
+                android:layout_height="match_parent" />
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:hint="@string/hint_max_distance">
+
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/maxDistanceInput"
                     android:layout_width="match_parent"
@@ -175,6 +309,7 @@
             android:layout_marginTop="16dp"
             android:hint="@string/hint_min_fare_per_km"
             app:layout_constraintTop_toBottomOf="@id/distanceLayout">
+
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/minFarePerKmInput"
                 android:layout_width="match_parent"
@@ -187,8 +322,8 @@
             android:id="@+id/saveButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/save_filters"
             android:layout_marginTop="24dp"
+            android:text="@string/save_filters"
             app:layout_constraintTop_toBottomOf="@id/minFarePerKmLayout" />
 
         <Button
@@ -196,8 +331,8 @@
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/open_accessibility"
             android:layout_marginTop="8dp"
+            android:text="@string/open_accessibility"
             app:layout_constraintTop_toBottomOf="@id/saveButton" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>

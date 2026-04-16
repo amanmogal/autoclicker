@@ -8,12 +8,20 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import android.content.SharedPreferences
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
+import java.text.DateFormat
+import java.util.Date
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var loginEmailInput: TextInputEditText
+    private lateinit var loginPasswordInput: TextInputEditText
+    private lateinit var loginButton: Button
+    private lateinit var logoutButton: Button
+    private lateinit var loginStatusLabel: TextView
 
     private lateinit var masterSwitch: SwitchMaterial
     private lateinit var minFareInput: TextInputEditText
@@ -23,11 +31,47 @@ class MainActivity : AppCompatActivity() {
     private lateinit var minFarePerKmInput: TextInputEditText
     private lateinit var saveButton: Button
     private lateinit var openAccessibilityButton: Button
+    private lateinit var monthlyPlanButton: Button
+    private lateinit var yearlyPlanButton: Button
     private lateinit var statusLabel: TextView
+    private lateinit var subscriptionStatusLabel: TextView
+
+    private lateinit var authManager: AuthManager
+    private lateinit var subscriptionManager: SubscriptionManager
+    private var pendingPaymentRequest: UpiPaymentRequest? = null
+
+    private val upiLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val paymentRequest = pendingPaymentRequest ?: return@registerForActivityResult
+        val response = result.data?.getStringExtra("response")
+
+        if (result.resultCode == RESULT_OK && subscriptionManager.isUpiSuccessResponse(response)) {
+            subscriptionManager.markPaymentPending(paymentRequest.plan, paymentRequest.transactionId)
+            if (BuildConfig.ALLOW_LOCAL_SUBSCRIPTION_ACTIVATION) {
+                subscriptionManager.activate(paymentRequest.plan)
+                Toast.makeText(this, getString(R.string.payment_success, paymentRequest.plan.label), Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, getString(R.string.payment_verification_required, paymentRequest.transactionId), Toast.LENGTH_LONG).show()
+            }
+            refreshSubscriptionStatus()
+            refreshActionAvailability()
+            return@registerForActivityResult
+        }
+
+        Toast.makeText(this, R.string.payment_pending_or_failed, Toast.LENGTH_SHORT).show()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        authManager = AuthManager(this)
+        subscriptionManager = SubscriptionManager(this)
+
+        loginEmailInput = findViewById(R.id.loginEmailInput)
+        loginPasswordInput = findViewById(R.id.loginPasswordInput)
+        loginButton = findViewById(R.id.loginButton)
+        logoutButton = findViewById(R.id.logoutButton)
+        loginStatusLabel = findViewById(R.id.loginStatusLabel)
 
         masterSwitch = findViewById(R.id.masterSwitch)
         minFareInput = findViewById(R.id.minFareInput)
@@ -37,13 +81,40 @@ class MainActivity : AppCompatActivity() {
         minFarePerKmInput = findViewById(R.id.minFarePerKmInput)
         saveButton = findViewById(R.id.saveButton)
         openAccessibilityButton = findViewById(R.id.openAccessibilityButton)
+        monthlyPlanButton = findViewById(R.id.monthlyPlanButton)
+        yearlyPlanButton = findViewById(R.id.yearlyPlanButton)
+        subscriptionStatusLabel = findViewById(R.id.subscriptionStatusLabel)
         statusLabel = findViewById(R.id.statusLabel)
 
         loadSettings()
+        refreshLoginStatus()
         refreshStatusLabel()
+        refreshSubscriptionStatus()
+        refreshActionAvailability()
+
+        loginButton.setOnClickListener {
+            attemptLogin()
+        }
+
+        logoutButton.setOnClickListener {
+            authManager.logout()
+            masterSwitch.isChecked = false
+            refreshLoginStatus()
+            refreshActionAvailability()
+            refreshStatusLabel()
+            Toast.makeText(this, R.string.logout_success, Toast.LENGTH_SHORT).show()
+        }
 
         saveButton.setOnClickListener {
             saveSettings()
+        }
+
+        monthlyPlanButton.setOnClickListener {
+            launchUpiPayment(SubscriptionPlan.MONTHLY)
+        }
+
+        yearlyPlanButton.setOnClickListener {
+            launchUpiPayment(SubscriptionPlan.YEARLY)
         }
 
         openAccessibilityButton.setOnClickListener {
@@ -54,7 +125,46 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshLoginStatus()
         refreshStatusLabel()
+        refreshSubscriptionStatus()
+        refreshActionAvailability()
+    }
+
+    private fun attemptLogin() {
+        val email = loginEmailInput.text?.toString()?.trim().orEmpty()
+        val password = loginPasswordInput.text?.toString().orEmpty()
+
+        if (!authManager.login(email, password)) {
+            Toast.makeText(this, R.string.login_error, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        loginPasswordInput.text = null
+        refreshLoginStatus()
+        refreshActionAvailability()
+        Toast.makeText(this, R.string.login_success, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun launchUpiPayment(plan: SubscriptionPlan) {
+        if (!authManager.isLoggedIn()) {
+            Toast.makeText(this, R.string.login_required_for_payment, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val upiRequest = subscriptionManager.createUpiRequest(plan)
+        pendingPaymentRequest = upiRequest
+
+        val upiIntent = Intent(Intent.ACTION_VIEW).apply {
+            data = upiRequest.uri
+        }
+
+        if (upiIntent.resolveActivity(packageManager) == null) {
+            Toast.makeText(this, R.string.upi_not_available, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        upiLauncher.launch(Intent.createChooser(upiIntent, getString(R.string.choose_upi_app)))
     }
 
     private fun loadSettings() {
@@ -80,6 +190,20 @@ class MainActivity : AppCompatActivity() {
 
             if (minFareStr.isEmpty() || maxFareStr.isEmpty() || minDistanceStr.isEmpty() || maxDistanceStr.isEmpty() || minFarePerKmStr.isEmpty()) {
                 Toast.makeText(this, "Fields cannot be empty", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            if (!authManager.isLoggedIn()) {
+                Toast.makeText(this, R.string.login_required, Toast.LENGTH_LONG).show()
+                masterSwitch.isChecked = false
+                refreshStatusLabel()
+                return
+            }
+
+            if (masterSwitch.isChecked && !subscriptionManager.isSubscriptionActive()) {
+                Toast.makeText(this, R.string.subscription_required, Toast.LENGTH_LONG).show()
+                masterSwitch.isChecked = false
+                refreshStatusLabel()
                 return
             }
 
@@ -116,9 +240,61 @@ class MainActivity : AppCompatActivity() {
             refreshStatusLabel()
 
             Toast.makeText(this, "Settings Saved & Mode Updated", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             Toast.makeText(this, "Invalid input. Please enter numbers only.", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun refreshLoginStatus() {
+        if (authManager.isLoggedIn()) {
+            loginStatusLabel.text = getString(R.string.login_status_logged_in, authManager.currentUserEmail())
+            return
+        }
+
+        loginStatusLabel.text = getString(R.string.login_status_logged_out)
+    }
+
+    private fun refreshActionAvailability() {
+        val loggedIn = authManager.isLoggedIn()
+        val hasSubscription = subscriptionManager.isSubscriptionActive()
+
+        logoutButton.isEnabled = loggedIn
+        loginButton.isEnabled = !loggedIn
+
+        monthlyPlanButton.isEnabled = loggedIn
+        yearlyPlanButton.isEnabled = loggedIn
+
+        saveButton.isEnabled = loggedIn
+        masterSwitch.isEnabled = loggedIn && hasSubscription
+
+        if (!loggedIn || !hasSubscription) {
+            masterSwitch.isChecked = false
+        }
+    }
+
+    private fun refreshSubscriptionStatus() {
+        val billingState = subscriptionManager.billingState()
+        if (billingState.isActive) {
+            val expiry = DateFormat.getDateInstance(DateFormat.MEDIUM)
+                .format(Date(billingState.activeUntilMs))
+            subscriptionStatusLabel.text = getString(
+                R.string.subscription_status_active,
+                billingState.activePlanName ?: getString(R.string.unknown_plan),
+                expiry
+            )
+            return
+        }
+
+        if (!billingState.pendingTransactionId.isNullOrBlank()) {
+            subscriptionStatusLabel.text = getString(
+                R.string.subscription_status_pending,
+                billingState.pendingPlanName ?: getString(R.string.unknown_plan),
+                billingState.pendingTransactionId
+            )
+            return
+        }
+
+        subscriptionStatusLabel.text = getString(R.string.subscription_status_inactive)
     }
 
     private fun refreshStatusLabel() {
@@ -148,7 +324,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readBooleanPref(
-        prefs: SharedPreferences,
+        prefs: android.content.SharedPreferences,
         primaryKey: String,
         legacyKey: String,
         defaultValue: Boolean
@@ -161,7 +337,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readFloatPref(
-        prefs: SharedPreferences,
+        prefs: android.content.SharedPreferences,
         primaryKey: String,
         legacyKey: String,
         defaultValue: Float
