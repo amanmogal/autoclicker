@@ -9,6 +9,14 @@ class FilterEngine {
     companion object {
         private const val TAG = "FilterEngine"
         private const val LOG_THROTTLE_MS = 1500L
+        private val DISTANCE_TOKEN_REGEX = Regex(
+            """(\d+(?:[.,]\d+)?)\s*(km|kilometer|kilometre|किमी|ಕಿ\.?ಮೀ|meter|metre|mtr|मीटर|ಮೀಟರ್)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        private val METER_DISTANCE_TOKEN_REGEX = Regex(
+            """(\d+(?:[.,]\d+)?)\s*(meter|metre|mtr|मीटर|ಮೀಟರ್)\b""",
+            RegexOption.IGNORE_CASE
+        )
     }
 
     // User settings
@@ -92,5 +100,26 @@ class FilterEngine {
         } catch (e: Exception) {
             0.0
         }
+    }
+
+    fun parseDistanceKm(text: String): Double {
+        if (text.isBlank()) return 0.0
+
+        val normalized = text.lowercase()
+        val tokenMatch = DISTANCE_TOKEN_REGEX.find(normalized)
+        if (tokenMatch != null) {
+            val raw = tokenMatch.groupValues[1].replace(",", ".").toDoubleOrNull() ?: 0.0
+            if (raw <= 0.0) return 0.0
+            val unit = tokenMatch.groupValues[2].lowercase()
+            return if (unit.startsWith("m") || unit.contains("मीटर") || unit.contains("ಮೀಟರ್")) {
+                raw / 1000.0
+            } else {
+                raw
+            }
+        }
+
+        val fallback = parseAmount(normalized)
+        if (fallback <= 0.0) return 0.0
+        return if (METER_DISTANCE_TOKEN_REGEX.containsMatchIn(normalized)) fallback / 1000.0 else fallback
     }
 }

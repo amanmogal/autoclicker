@@ -32,6 +32,8 @@ class RideAcceptService : AccessibilityService() {
     private var isAutoAcceptEnabled = false
     private var lastActionAtMs = 0L
     private var lastActionSignature: String? = null
+    private var pendingActionSignature: String? = null
+    private var pendingActionAtMs = 0L
     private var lastLoggedRidePackage: String? = null
     private var lastSettingsSnapshot: String? = null
     private var lastScrapeLogAtMs = 0L
@@ -62,6 +64,7 @@ class RideAcceptService : AccessibilityService() {
     private lateinit var authManager: AuthManager
     private var overlayView: View? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
+    private var overlayRestoreRunnable: Runnable? = null
     private var overlayAttached = false
     private var settingsPrefs: SharedPreferences? = null
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -74,13 +77,16 @@ class RideAcceptService : AccessibilityService() {
         private const val TAG = "RideAcceptService"
         private const val ACTION_COOLDOWN_MS = 12L
         private const val REPEAT_ACTION_SUPPRESS_MS = 400L
+        private const val PENDING_ACTION_TIMEOUT_MS = 1200L
         private const val SCRAPE_LOG_THROTTLE_MS = 1500L
         private const val FULL_TREE_SCAN_THROTTLE_MS = 80L
         private const val OVERLAY_TOGGLE_DEBOUNCE_MS = 700L
         private const val OVERLAY_TAP_MAX_DURATION_MS = 350L
+        private const val OVERLAY_GESTURE_RESTORE_DELAY_MS = 250L
         private const val NO_TARGET_LOG_THROTTLE_MS = 2000L
         private const val EVENT_DATA_TTL_MS = 2500L
         private const val PERIODIC_SCAN_MS = 1000L
+        private const val MAX_OFFER_CONTAINER_CANDIDATES = 12
 
         private val ACCEPT_KEYWORDS = setOf(
             // Keep this strict to avoid false positives like "Go To".
@@ -124,10 +130,9 @@ class RideAcceptService : AccessibilityService() {
         private val SWIPE_KEYWORDS = setOf("swipe", "slide", "drag", "खींच", "ಸ್ಲೈಡ್")
         private val CURRENCY_TOKEN_REGEX = Regex("""(?:₹|\b(?:rs|inr)\.?\b)""", RegexOption.IGNORE_CASE)
         private val DISTANCE_TOKEN_REGEX = Regex(
-            """\d+([.,]\d+)?\s*(km|kilometer|kilometre|किमी|ಕಿ\.?ಮೀ|meter|metre|mtr|मीटर|ಮೀಟರ್)\b""",
+            """(\d+(?:[.,]\d+)?)\s*(km|kilometer|kilometre|किमी|ಕಿ\.?ಮೀ|meter|metre|mtr|मीटर|ಮೀಟರ್)\b""",
             RegexOption.IGNORE_CASE
         )
-        private val METER_DISTANCE_TOKEN_REGEX = Regex("""\d+([.,]\d+)?\s*(meter|metre|mtr|मीटर|ಮೀಟರ್)\b""", RegexOption.IGNORE_CASE)
 
     }
 
@@ -428,9 +433,16 @@ class RideAcceptService : AccessibilityService() {
                 )
             }
             if (candidates.isNotEmpty()) return candidates
-            if (acceptNodes.size > 1) return emptyList()
             Log.d(TAG, "[$windowType] Accept target found without valid metrics; trying bounded fallback scan")
         }
+
+        val containerCandidates = buildCandidatesFromOfferContainers(
+            rootNode = rootNode,
+            windowType = windowType,
+            packageName = packageName
+        )
+        if (containerCandidates.isNotEmpty()) return containerCandidates
+        if (acceptNodes.size > 1) return emptyList()
 
         val scraperData = ScraperData()
 
@@ -518,6 +530,90 @@ class RideAcceptService : AccessibilityService() {
         )
     }
 
+    private fun buildCandidatesFromOfferContainers(
+        rootNode: AccessibilityNodeInfo,
+        windowType: String,
+        packageName: String
+    ): List<RideCandidate> {
+        val rootBounds = Rect()
+        rootNode.getBoundsInScreen(rootBounds)
+
+        val candidates = mutableListOf<RideCandidate>()
+        collectOfferContainerCandidates(
+            node = rootNode,
+            rootBounds = rootBounds,
+            windowType = windowType,
+            packageName = packageName,
+            candidates = candidates
+        )
+
+        return candidates
+            .distinctBy { it.actionSignature }
+            .sortedByDescending { it.rankScore }
+    }
+
+    private fun collectOfferContainerCandidates(
+        node: AccessibilityNodeInfo,
+        rootBounds: Rect,
+        windowType: String,
+        packageName: String,
+        candidates: MutableList<RideCandidate>
+    ): Boolean {
+        var childProducedCandidate = false
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (collectOfferContainerCandidates(child, rootBounds, windowType, packageName, candidates)) {
+                childProducedCandidate = true
+            }
+            if (candidates.size >= MAX_OFFER_CONTAINER_CANDIDATES) {
+                return true
+            }
+        }
+
+        if (childProducedCandidate || candidates.size >= MAX_OFFER_CONTAINER_CANDIDATES) {
+            return childProducedCandidate
+        }
+
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (!isPotentialOfferContainer(bounds, rootBounds)) return false
+        if (!rootHasRideOfferSignals(node)) return false
+
+        val candidate = buildCandidateFromOfferContainer(node, windowType, packageName) ?: return false
+        candidates.add(candidate)
+        return true
+    }
+
+    private fun buildCandidateFromOfferContainer(
+        containerNode: AccessibilityNodeInfo,
+        windowType: String,
+        packageName: String
+    ): RideCandidate? {
+        val scraperData = ScraperData()
+        extractData(containerNode, scraperData)
+
+        if (scraperData.targetNode == null && scraperData.fare > 0.0 && scraperData.fallbackTargetNode != null) {
+            scraperData.targetNode = scraperData.fallbackTargetNode
+            scraperData.isSwipe = true
+        }
+
+        val targetNode = scraperData.targetNode ?: return null
+        val fare = scraperData.fare
+        val distance = scraperData.distance
+        if (!filterEngine.shouldAccept(fare, distance)) return null
+
+        return RideCandidate(
+            windowType = windowType,
+            packageName = packageName,
+            targetNode = targetNode,
+            fare = fare,
+            distance = distance,
+            isSwipe = scraperData.isSwipe,
+            rankScore = filterEngine.rankScore(fare, distance),
+            actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
+        )
+    }
+
     private class ScraperData {
         var targetNode: AccessibilityNodeInfo? = null
         var fare: Double = 0.0
@@ -556,7 +652,7 @@ class RideAcceptService : AccessibilityService() {
             }
 
             if (containsDistance(text)) {
-                val parsedDist = filterEngine.parseAmount(text)
+                val parsedDist = parseDistanceKm(text)
                 if (parsedDist > 0.0) {
                     val normalized = text.lowercase()
                     val isPickupDistance = normalized.contains("pickup") ||
@@ -611,11 +707,7 @@ class RideAcceptService : AccessibilityService() {
             val gesture = GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, 1))
                 .build()
-            val dispatched = dispatchGesture(gesture, gestureCallback(windowType), null)
-            if (dispatched) {
-                markActionExecuted(actionSignature)
-            }
-            return dispatched
+            return dispatchGestureWithOverlayGuard(gesture, windowType, actionSignature)
         }
 
         val forced = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -649,29 +741,54 @@ class RideAcceptService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 200))
             .build()
 
-        val dispatched = dispatchGesture(gesture, gestureCallback(windowType), null)
+        val dispatched = dispatchGestureWithOverlayGuard(gesture, windowType, actionSignature)
         if (dispatched) {
-            markActionExecuted(actionSignature)
             Log.d(TAG, "[$windowType] Swipe gesture dispatched")
             return true
         }
         return clickNode(node, windowType, actionSignature)
     }
 
-    private fun gestureCallback(windowType: String): GestureResultCallback {
+    private fun dispatchGestureWithOverlayGuard(
+        gesture: GestureDescription,
+        windowType: String,
+        actionSignature: String
+    ): Boolean {
+        markActionPending(actionSignature)
+        hideOverlayForGesture()
+        val dispatched = dispatchGesture(gesture, gestureCallback(windowType, actionSignature), null)
+        if (!dispatched) {
+            clearPendingAction(actionSignature)
+            restoreOverlayAfterGesture(delayMs = 0L)
+        }
+        return dispatched
+    }
+
+    private fun gestureCallback(windowType: String, actionSignature: String): GestureResultCallback {
         return object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 Log.d(TAG, "[$windowType] Gesture success")
+                markActionExecuted(actionSignature)
+                restoreOverlayAfterGesture()
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
                 Log.e(TAG, "[$windowType] Gesture failed")
+                clearPendingAction(actionSignature)
+                restoreOverlayAfterGesture()
             }
         }
     }
 
     private fun canAttemptAction(actionSignature: String): Boolean {
         val now = System.currentTimeMillis()
+        val pendingSignature = pendingActionSignature
+        if (pendingSignature != null) {
+            if (now - pendingActionAtMs < PENDING_ACTION_TIMEOUT_MS) {
+                return false
+            }
+            clearPendingAction(pendingSignature)
+        }
         if (now - lastActionAtMs < ACTION_COOLDOWN_MS) {
             return false
         }
@@ -695,9 +812,42 @@ class RideAcceptService : AccessibilityService() {
         return "$windowType|$label|$fareBucket|$distanceBucket|${bounds.centerX()}|${bounds.centerY()}"
     }
 
+    private fun markActionPending(actionSignature: String) {
+        pendingActionSignature = actionSignature
+        pendingActionAtMs = System.currentTimeMillis()
+    }
+
+    private fun clearPendingAction(actionSignature: String) {
+        if (pendingActionSignature == actionSignature) {
+            pendingActionSignature = null
+            pendingActionAtMs = 0L
+        }
+    }
+
     private fun markActionExecuted(actionSignature: String) {
         lastActionAtMs = System.currentTimeMillis()
         lastActionSignature = actionSignature
+        clearPendingAction(actionSignature)
+    }
+
+    private fun hideOverlayForGesture() {
+        val view = overlayView ?: return
+        overlayRestoreRunnable?.let { scanHandler.removeCallbacks(it) }
+        overlayRestoreRunnable = null
+        if (view.visibility != View.INVISIBLE) {
+            view.visibility = View.INVISIBLE
+        }
+    }
+
+    private fun restoreOverlayAfterGesture(delayMs: Long = OVERLAY_GESTURE_RESTORE_DELAY_MS) {
+        val view = overlayView ?: return
+        overlayRestoreRunnable?.let { scanHandler.removeCallbacks(it) }
+        val restore = Runnable {
+            view.visibility = View.VISIBLE
+            overlayRestoreRunnable = null
+        }
+        overlayRestoreRunnable = restore
+        scanHandler.postDelayed(restore, delayMs)
     }
 
     private fun maybeLogScrapedData(windowType: String, fare: Double, distance: Double) {
@@ -841,6 +991,20 @@ class RideAcceptService : AccessibilityService() {
         return isBottomSheetLike || isCardLike
     }
 
+    private fun isPotentialOfferContainer(bounds: Rect, rootBounds: Rect): Boolean {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return false
+        if (!Rect.intersects(bounds, rootBounds)) return false
+
+        val displayHeight = resources.displayMetrics.heightPixels.takeIf { it > 0 } ?: rootBounds.height()
+        val displayWidth = resources.displayMetrics.widthPixels.takeIf { it > 0 } ?: rootBounds.width()
+        val coversMostScreen = bounds.width() >= displayWidth * 0.95f && bounds.height() >= displayHeight * 0.85f
+        if (coversMostScreen) return false
+        if (bounds.width() < min(240, max(120, displayWidth / 3))) return false
+        if (bounds.height() < 72 || bounds.height() > displayHeight * 0.78f) return false
+
+        return bounds.width() >= displayWidth * 0.55f || bounds.height() >= 120
+    }
+
     private fun mergeScraperData(primary: ScraperData, fallback: ScraperData) {
         if (primary.targetNode == null) {
             primary.targetNode = fallback.targetNode
@@ -896,22 +1060,7 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun parseDistanceKm(text: String): Double {
-        val normalized = text.lowercase()
-        val tokenMatch = DISTANCE_TOKEN_REGEX.find(normalized)
-        if (tokenMatch != null) {
-            val raw = tokenMatch.groupValues[1].replace(",", ".").toDoubleOrNull() ?: 0.0
-            if (raw <= 0.0) return 0.0
-            val unit = tokenMatch.groupValues[2].lowercase()
-            return if (unit.startsWith("m") || unit.contains("मीटर") || unit.contains("ಮೀಟರ್")) {
-                raw / 1000.0
-            } else {
-                raw
-            }
-        }
-
-        val fallback = filterEngine.parseAmount(normalized)
-        if (fallback <= 0.0) return 0.0
-        return if (METER_DISTANCE_TOKEN_REGEX.containsMatchIn(normalized)) fallback / 1000.0 else fallback
+        return filterEngine.parseDistanceKm(text)
     }
 
     private fun maybeTrackFallbackTarget(node: AccessibilityNodeInfo, data: ScraperData) {
@@ -1124,6 +1273,8 @@ class RideAcceptService : AccessibilityService() {
         settingsPrefs?.unregisterOnSharedPreferenceChangeListener(settingsListener)
         settingsPrefs = null
         scanHandler.removeCallbacks(periodicScanRunnable)
+        overlayRestoreRunnable?.let { scanHandler.removeCallbacks(it) }
+        overlayRestoreRunnable = null
         overlayView?.let {
             runCatching { windowManager.removeView(it) }
             overlayAttached = false

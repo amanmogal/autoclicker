@@ -51,6 +51,15 @@ class FilterEngineTest {
     }
 
     @Test
+    fun parseDistanceKm_shouldKeepWholeNumberAndDecimalDistances() {
+        val engine = FilterEngine()
+
+        assertEquals(2.0, engine.parseDistanceKm("Pickup 2 km"), 0.001)
+        assertEquals(2.5, engine.parseDistanceKm("Pickup 2.5 km"), 0.001)
+        assertEquals(0.5, engine.parseDistanceKm("Pickup 500 meter"), 0.001)
+    }
+
+    @Test
     fun rankScore_shouldPrioritizeHigherFarePerKm() {
         val engine = FilterEngine()
 
@@ -58,5 +67,15 @@ class FilterEngineTest {
         val betterFarePerKm = engine.rankScore(fare = 180.0, distance = 4.0)
 
         assertTrue(betterFarePerKm > higherAbsoluteFare)
+    }
+
+    @Test
+    fun rankScore_shouldRankKnownDistanceAboveSimilarFareWithoutDistance() {
+        val engine = FilterEngine()
+
+        val unknownDistance = engine.rankScore(fare = 250.0, distance = 0.0)
+        val knownDistance = engine.rankScore(fare = 240.0, distance = 4.0)
+
+        assertTrue(knownDistance > unknownDistance)
     }
 }
