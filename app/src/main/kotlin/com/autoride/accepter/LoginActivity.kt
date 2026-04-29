@@ -58,13 +58,21 @@ class LoginActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.logout_success, Toast.LENGTH_SHORT).show()
         }
 
-        if (authManager.isLoggedIn()) {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            refreshLoginStatus()
+            routeLoggedInUser()
+        } else if (authManager.isLoggedIn()) {
             syncExistingSessionAndRoute()
         }
     }
 
     override fun onResume() {
         super.onResume()
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            refreshLoginStatus()
+            routeLoggedInUser()
+            return
+        }
         if (authManager.isLoggedIn()) {
             syncExistingSessionAndRoute()
             return
@@ -78,18 +86,30 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun attemptSignIn() {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            routeLoggedInUser()
+            return
+        }
         val email = loginEmailInput.text?.toString()?.trim().orEmpty()
         val password = loginPasswordInput.text?.toString().orEmpty()
         performAuthRequest { supabaseAuthClient.signIn(email, password) }
     }
 
     private fun attemptSignUp() {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            routeLoggedInUser()
+            return
+        }
         val email = loginEmailInput.text?.toString()?.trim().orEmpty()
         val password = loginPasswordInput.text?.toString().orEmpty()
         performAuthRequest { supabaseAuthClient.signUp(email, password) }
     }
 
     private fun attemptPasswordReset() {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            routeLoggedInUser()
+            return
+        }
         val email = loginEmailInput.text?.toString()?.trim().orEmpty()
         if (!supabaseAuthClientConfigured()) {
             Toast.makeText(this, R.string.supabase_not_configured, Toast.LENGTH_LONG).show()
@@ -115,6 +135,10 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun performAuthRequest(request: () -> SupabaseAuthResult) {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            routeLoggedInUser()
+            return
+        }
         val email = loginEmailInput.text?.toString()?.trim().orEmpty()
         if (!supabaseAuthClientConfigured() && authManager.currentAccessToken().isNullOrBlank()) {
             Toast.makeText(this, R.string.supabase_not_configured, Toast.LENGTH_LONG).show()
@@ -152,6 +176,11 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun syncExistingSessionAndRoute() {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            refreshLoginStatus()
+            routeLoggedInUser()
+            return
+        }
         if (sessionSyncInFlight) return
         val accessToken = authManager.currentAccessToken()
         if (accessToken.isNullOrBlank()) {
@@ -215,6 +244,8 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun supabaseAuthClientConfigured(): Boolean {
+        if (AppAccessPolicy.isLocalAccessMode()) return false
+
         return AppAccessPolicy.isSupabaseConfigured(
             BuildConfig.SUPABASE_URL,
             BuildConfig.SUPABASE_ANON_KEY

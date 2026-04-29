@@ -105,6 +105,11 @@ class AccessLockedActivity : AppCompatActivity() {
     }
 
     private fun refreshAccessState() {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            openOperations()
+            return
+        }
+
         val accessToken = authManager.currentAccessToken()
         if (accessToken.isNullOrBlank()) {
             authManager.logout()
