@@ -60,6 +60,17 @@ class RideWindowPolicyTest {
     }
 
     @Test
+    fun shouldScanActiveVendorOfferRootEvenWithoutDriverRole() {
+        assertTrue(
+            RideWindowPolicy.shouldScanActiveRoot(
+                rootPackage = "com.rapido.overlay",
+                appPackage = "com.autoride.accepter",
+                rootHasOfferSignals = true
+            )
+        )
+    }
+
+    @Test
     fun shouldScanNonOwnAccessibilityOverlayWithOfferSignals() {
         assertTrue(
             RideWindowPolicy.shouldScanWindow(

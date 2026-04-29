@@ -89,46 +89,6 @@ class RideAcceptService : AccessibilityService() {
         private const val PERIODIC_SCAN_MS = 1000L
         private const val MAX_OFFER_CONTAINER_CANDIDATES = 12
 
-        private val ACCEPT_KEYWORDS = setOf(
-            // Keep this strict to avoid false positives like "Go To".
-            "accept",
-            "confirm",
-            "match",
-            "agree",
-            "swipe to accept",
-            "accept ride",
-            "book now",
-            // Indic language variants seen in the legacy APK.
-            "स्वीकार", "स्वीकार करें", "पुष्टि", "पुष्टि करें", "मिलान", "मेल खाना",
-            "स्वीकार करा", "स्वीकारा", "पुष्टी करा", "पुष्टी", "जुळवा", "जुळणे", "जुळणी",
-            "ஏற்க", "ஒப்புக் கொள்", "ஏற்றுக்கொள்", "உறுதிப்படுத்து", "பொருந்து", "பொருத்தம்",
-            "స్వీకరించు", "అంగీకరించు", "నిర్ధారించు", "ధృవీకరించు", "సరిపోల్చు", "సరిపోవు", "సరిపోలిక",
-            "ಸ್ವೀಕರಿಸಿ", "ಒಪ್ಪಿಕೊ", "ದೃಢಪಡಿಸಿ", "ಖಚಿತಪಡಿಸು", "ಹೊಂದಿಕೆ", "ಹೊಂದಿಸು", "ಹೊಂದಾಣಿಕೆ"
-        )
-
-        private val ACCEPT_TEXT_PROBE_KEYWORDS = ACCEPT_KEYWORDS +
-            ACCEPT_KEYWORDS.map { keyword ->
-                keyword.replaceFirstChar { char ->
-                    if (char.isLowerCase()) char.titlecase(Locale.ROOT) else char.toString()
-                }
-            }
-
-        private val BLOCKED_ACTION_PHRASES = setOf(
-            "go to",
-            "start ride",
-            "navigate",
-            "pickup",
-            "drop",
-            "arrived",
-            "arrive",
-            "call rider",
-            "chat",
-            "cancel ride",
-            "online",
-            "offline"
-        )
-
-        private val SWIPE_KEYWORDS = setOf("swipe", "slide", "drag", "खींच", "ಸ್ಲೈಡ್")
         private val CURRENCY_TOKEN_REGEX = Regex("""(?:₹|\b(?:rs|inr)\.?\b)""", RegexOption.IGNORE_CASE)
         private val DISTANCE_TOKEN_REGEX = Regex(
             """(\d+(?:[.,]\d+)?)\s*(km|kilometer|kilometre|किमी|ಕಿ\.?ಮೀ|meter|metre|mtr|मीटर|ಮೀಟರ್)\b""",
@@ -374,7 +334,16 @@ class RideAcceptService : AccessibilityService() {
         val packageName = event.packageName?.toString()
         val visibleRideWindow = hasRideAppWindow()
         val eventLooksLikeRideOffer = eventContainsRideOfferSignals(event)
-        if ((packageName == null || !isRideApp(packageName)) && !visibleRideWindow && !eventLooksLikeRideOffer) return
+        val isRideAppEvent = packageName?.let { isRideApp(it) } == true
+        if (!RideEventScanPolicy.shouldProcessEvent(
+                eventType = event.eventType,
+                isRideAppEvent = isRideAppEvent,
+                hasVisibleRideWindow = visibleRideWindow,
+                eventLooksLikeRideOffer = eventLooksLikeRideOffer
+            )
+        ) {
+            return
+        }
         captureEventData(event)
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -431,8 +400,11 @@ class RideAcceptService : AccessibilityService() {
         if (!scannedAnyRideWindow) {
             rootInActiveWindow?.let { activeRoot ->
                 val activePackage = activeRoot.packageName?.toString().orEmpty()
-                if (isRideApp(activePackage) ||
-                    (isSystemOverlayHostPackage(activePackage) && rootHasRideOfferSignals(activeRoot))
+                if (RideWindowPolicy.shouldScanActiveRoot(
+                        rootPackage = activePackage,
+                        appPackage = applicationContext.packageName,
+                        rootHasOfferSignals = rootHasRideOfferSignals(activeRoot)
+                    )
                 ) {
                     processScreenContent(
                         rootNode = activeRoot,
@@ -1021,7 +993,7 @@ class RideAcceptService : AccessibilityService() {
     private fun findAcceptNodesByText(rootNode: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
         val candidates = mutableListOf<AccessibilityNodeInfo>()
         val seenBounds = mutableSetOf<String>()
-        for (keyword in ACCEPT_TEXT_PROBE_KEYWORDS) {
+        for (keyword in RideActionTextPolicy.acceptProbeKeywords) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
             for (node in nodes) {
                 if (!isAcceptText(extractNodeText(node))) continue
@@ -1228,18 +1200,11 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun isAcceptText(text: String): Boolean {
-        val normalized = text
-            .lowercase()
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-        if (normalized.isBlank()) return false
-        if (BLOCKED_ACTION_PHRASES.any { blocked -> normalized.contains(blocked) }) return false
-        return ACCEPT_KEYWORDS.any { keyword -> normalized.contains(keyword) }
+        return RideActionTextPolicy.isAcceptText(text)
     }
 
     private fun isSwipeText(text: String): Boolean {
-        val normalized = text.lowercase()
-        return SWIPE_KEYWORDS.any { normalized.contains(it.lowercase()) }
+        return RideActionTextPolicy.isSwipeText(text)
     }
 
     private fun containsCurrency(text: String): Boolean {

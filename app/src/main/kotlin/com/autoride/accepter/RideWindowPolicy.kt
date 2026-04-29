@@ -54,6 +54,19 @@ object RideWindowPolicy {
             hasRideVendorToken(rootPackage)
     }
 
+    fun shouldScanActiveRoot(
+        rootPackage: String,
+        appPackage: String,
+        rootHasOfferSignals: Boolean
+    ): Boolean {
+        return shouldScanWindow(
+            windowType = AccessibilityWindowInfo.TYPE_APPLICATION,
+            rootPackage = rootPackage,
+            appPackage = appPackage,
+            rootHasOfferSignals = rootHasOfferSignals
+        )
+    }
+
     private fun hasRideVendorToken(packageName: String): Boolean {
         val normalized = packageName.lowercase()
         val segments = normalized.split('.')
