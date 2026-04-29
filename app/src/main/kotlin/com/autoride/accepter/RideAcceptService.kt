@@ -772,17 +772,22 @@ class RideAcceptService : AccessibilityService() {
     private fun extractMetricsNearTarget(targetNode: AccessibilityNodeInfo, data: ScraperData) {
         val textCandidates = linkedSetOf<String>()
 
-        fun collectAround(node: AccessibilityNodeInfo?) {
-            if (node == null) return
-            collectTextCandidates(node, depth = 0, maxDepth = 2, out = textCandidates)
-            val parent = node.parent
-            if (parent != null) {
-                collectTextCandidates(parent, depth = 0, maxDepth = 2, out = textCandidates)
-                collectTextCandidates(parent.parent, depth = 0, maxDepth = 1, out = textCandidates)
+        val targetBounds = Rect()
+        targetNode.getBoundsInScreen(targetBounds)
+        var ancestor: AccessibilityNodeInfo? = targetNode
+        var ancestorDepth = 0
+        while (ancestor != null && ancestorDepth <= 6) {
+            val ancestorBounds = Rect()
+            ancestor.getBoundsInScreen(ancestorBounds)
+            val maxDepth = when {
+                ancestorDepth <= 2 -> 3
+                isLikelyOfferContainer(ancestorBounds, targetBounds) -> 4
+                else -> 1
             }
+            collectTextCandidates(ancestor, depth = 0, maxDepth = maxDepth, out = textCandidates)
+            ancestor = ancestor.parent
+            ancestorDepth += 1
         }
-
-        collectAround(targetNode)
 
         var bestDistanceScore = Int.MIN_VALUE
         var bestDistance = data.distance
@@ -809,6 +814,22 @@ class RideAcceptService : AccessibilityService() {
         if (bestDistance > 0.0) {
             data.distance = bestDistance
         }
+    }
+
+    private fun isLikelyOfferContainer(bounds: Rect, targetBounds: Rect): Boolean {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return false
+        if (!Rect.intersects(bounds, targetBounds)) return false
+
+        val displayHeight = resources.displayMetrics.heightPixels.takeIf { it > 0 } ?: return true
+        val displayWidth = resources.displayMetrics.widthPixels.takeIf { it > 0 } ?: return true
+        val coversMostScreen = bounds.width() >= displayWidth * 0.95f && bounds.height() >= displayHeight * 0.85f
+        if (coversMostScreen) return false
+
+        val isBottomSheetLike = bounds.width() >= displayWidth * 0.75f &&
+            bounds.top >= displayHeight * 0.25f
+        val isCardLike = bounds.height() <= displayHeight * 0.70f &&
+            bounds.width() >= min(260, displayWidth / 2)
+        return isBottomSheetLike || isCardLike
     }
 
     private fun mergeScraperData(primary: ScraperData, fallback: ScraperData) {
