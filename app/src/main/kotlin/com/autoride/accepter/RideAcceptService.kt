@@ -122,11 +122,6 @@ class RideAcceptService : AccessibilityService() {
         )
         private val METER_DISTANCE_TOKEN_REGEX = Regex("""\d+([.,]\d+)?\s*(meter|metre|mtr|मीटर|ಮೀಟರ್)\b""", RegexOption.IGNORE_CASE)
 
-        // Vendor token plus a driver-role token is required.
-        // This avoids matching consumer app IDs like *.customer.
-        private val RIDE_VENDOR_TOKENS = setOf("ola", "rapido", "uber", "namma", "yatri")
-        private val DRIVER_ROLE_TOKENS = setOf("driver", "rider", "captain", "partner", "sathi", "pilot")
-        private val BLOCKED_ROLE_TOKENS = setOf("customer", "passenger", "consumer", "client", "rental")
     }
 
     override fun onServiceConnected() {
@@ -316,7 +311,9 @@ class RideAcceptService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) {
             updateSettings()
         }
 
@@ -330,6 +327,7 @@ class RideAcceptService : AccessibilityService() {
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
         ) {
             processAllWindows()
@@ -358,18 +356,18 @@ class RideAcceptService : AccessibilityService() {
         var scannedAnyRideWindow = false
 
         for (window in windows) {
-            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
-                window.type != AccessibilityWindowInfo.TYPE_SYSTEM
+            val rootNode = window.root ?: continue
+            val rootPackage = rootNode.packageName?.toString().orEmpty()
+            val rootHasOfferSignals = rootHasRideOfferSignals(rootNode)
+            if (!RideWindowPolicy.shouldScanWindow(
+                    windowType = window.type,
+                    rootPackage = rootPackage,
+                    appPackage = applicationContext.packageName,
+                    rootHasOfferSignals = rootHasOfferSignals
+                )
             ) {
                 continue
             }
-            val rootNode = window.root ?: continue
-            val rootPackage = rootNode.packageName?.toString().orEmpty()
-            val ridePackageWindow = isRideApp(rootPackage)
-            val systemOfferWindow = window.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
-                rootPackage != applicationContext.packageName &&
-                rootHasRideOfferSignals(rootNode)
-            if (!ridePackageWindow && !systemOfferWindow) continue
             scannedAnyRideWindow = true
             processScreenContent(
                 rootNode = rootNode,
@@ -930,19 +928,7 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun isRideApp(packageName: String): Boolean {
-        val normalized = packageName.lowercase()
-        val segments = normalized.split('.')
-        val hasVendor = segments.any { segment ->
-            RIDE_VENDOR_TOKENS.any { vendor -> segment.startsWith(vendor) }
-        }
-        val hasDriverRole = segments.any { segment ->
-            DRIVER_ROLE_TOKENS.any { role -> segment.contains(role) }
-        }
-        val hasBlockedRole = segments.any { segment ->
-            BLOCKED_ROLE_TOKENS.any { blocked -> segment.contains(blocked) }
-        }
-
-        val matched = hasVendor && hasDriverRole && !hasBlockedRole
+        val matched = RideWindowPolicy.isRideApp(packageName)
         if (matched && lastLoggedRidePackage != packageName) {
             lastLoggedRidePackage = packageName
             Log.d(TAG, "Ride app detected: $packageName")
@@ -951,10 +937,7 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun isSystemOverlayHostPackage(packageName: String): Boolean {
-        val normalized = packageName.lowercase()
-        return normalized.isBlank() ||
-            normalized == "android" ||
-            normalized.contains("systemui")
+        return RideWindowPolicy.isSystemOverlayHostPackage(packageName)
     }
 
     private fun isAcceptText(text: String): Boolean {
