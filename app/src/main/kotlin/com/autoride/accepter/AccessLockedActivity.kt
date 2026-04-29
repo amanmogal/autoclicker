@@ -115,8 +115,8 @@ class AccessLockedActivity : AppCompatActivity() {
 
         refreshButton.isEnabled = false
         networkExecutor.execute {
-            val result = supabaseAuthClient.refreshCurrentAccess(accessToken)
-            result.accessSnapshot?.let { authManager.saveAccessSnapshot(it) }
+            val result = refreshStoredSession(accessToken)
+            saveAuthResult(result)
 
             runOnUiThread {
                 refreshButton.isEnabled = true
@@ -133,6 +133,24 @@ class AccessLockedActivity : AppCompatActivity() {
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun refreshStoredSession(accessToken: String): SupabaseAuthResult {
+        val refreshToken = authManager.currentRefreshToken()
+        return if (!refreshToken.isNullOrBlank()) {
+            supabaseAuthClient.refreshSession(refreshToken)
+        } else {
+            supabaseAuthClient.refreshCurrentAccess(accessToken)
+        }
+    }
+
+    private fun saveAuthResult(result: SupabaseAuthResult) {
+        val session = result.session
+        if (session != null) {
+            authManager.saveSession(session, result.accessSnapshot)
+            return
+        }
+        result.accessSnapshot?.let { authManager.saveAccessSnapshot(it) }
     }
 
     private fun openOperations() {

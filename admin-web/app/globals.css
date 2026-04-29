@@ -1,4 +1,6 @@
 :root {
+  --font-headline: "Avenir Next", "Inter", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "Roboto Mono", Consolas, monospace;
   --bg: #edf4ef;
   --bg-strong: #dbe9df;
   --panel: rgba(255, 255, 255, 0.82);

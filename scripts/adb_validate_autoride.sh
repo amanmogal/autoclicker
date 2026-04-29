@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ADB="${ADB:-/Users/apple/Library/Android/sdk/platform-tools/adb}"
-APK="${1:-app/build/outputs/apk/debug/AutoRideAccepter_Latest.apk}"
+APK="${1:-app/build/outputs/apk/debug/BhadaAccepter_Latest.apk}"
 PKG="com.autoride.accepter"
-ACTIVITY="com.autoride.accepter/.MainActivity"
+ACTIVITY="com.autoride.accepter/.LoginActivity"
 
 if [[ ! -f "$APK" ]]; then
   echo "APK not found: $APK" >&2

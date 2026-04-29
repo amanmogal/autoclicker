@@ -122,6 +122,24 @@ class SupabaseAuthClient {
         )
     }
 
+    fun refreshSession(refreshToken: String): SupabaseAuthResult {
+        if (refreshToken.isBlank()) {
+            return SupabaseAuthResult(errorMessage = "Missing refresh token.")
+        }
+        if (!isConfigured()) {
+            return SupabaseAuthResult(errorMessage = "Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY in Gradle properties.")
+        }
+
+        val payload = JSONObject().put("refresh_token", refreshToken)
+        return sendAuthRequest(
+            method = "POST",
+            path = "/auth/v1/token?grant_type=refresh_token",
+            payload = payload,
+            accessToken = null,
+            requireSession = false
+        )
+    }
+
     private fun isConfigured(): Boolean {
         if (!baseUrl.startsWith("http")) return false
         if (anonKey.isBlank()) return false
@@ -216,7 +234,7 @@ class SupabaseAuthClient {
                 return SupabaseAuthResult(errorMessage = "Sign-in failed: no session token returned.")
             }
 
-            SupabaseAuthResult(errorMessage = extractErrorMessage(json, rawBody, code))
+            SupabaseAuthResult(errorMessage = extractErrorMessage(json, rawBody, code, path))
         } catch (e: UnknownHostException) {
             Log.e(TAG, "Unknown host for Supabase URL: $baseUrl", e)
             SupabaseAuthResult(errorMessage = "Supabase host not reachable. Check SUPABASE_URL and internet access.")
@@ -261,15 +279,18 @@ class SupabaseAuthClient {
         )
     }
 
-    private fun extractErrorMessage(json: JSONObject?, rawBody: String, code: Int): String {
+    private fun extractErrorMessage(json: JSONObject?, rawBody: String, code: Int, path: String): String {
+        val bodyText = rawBody.lowercase()
         if (code == 401 || code == 403) {
+            if (path.endsWith("/user") || path.contains("grant_type=refresh_token")) {
+                return "Session expired. Sign in again."
+            }
             return "Invalid Supabase key or URL for this project."
         }
         if (code == 429) {
             return "Too many auth attempts. Please wait and retry."
         }
 
-        val bodyText = rawBody.lowercase()
         if (bodyText.contains("email not confirmed")) {
             return "Email not confirmed. Verify your inbox link before signing in."
         }

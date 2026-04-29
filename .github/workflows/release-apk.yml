@@ -32,6 +32,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/build/outputs/apk/debug/AutoRideAccepter_Latest.apk
-            release_apk/AutoRideAccepter_Latest.apk
+            app/build/outputs/apk/debug/BhadaAccepter_Latest.apk
+            release_apk/BhadaAccepter_Latest.apk
           generate_release_notes: true

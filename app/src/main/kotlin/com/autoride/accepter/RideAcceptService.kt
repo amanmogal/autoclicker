@@ -324,7 +324,8 @@ class RideAcceptService : AccessibilityService() {
 
         val packageName = event.packageName?.toString()
         val visibleRideWindow = hasRideAppWindow()
-        if ((packageName == null || !isRideApp(packageName)) && !visibleRideWindow) return
+        val eventLooksLikeRideOffer = eventContainsRideOfferSignals(event)
+        if ((packageName == null || !isRideApp(packageName)) && !visibleRideWindow && !eventLooksLikeRideOffer) return
         captureEventData(event)
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -364,24 +365,30 @@ class RideAcceptService : AccessibilityService() {
             }
             val rootNode = window.root ?: continue
             val rootPackage = rootNode.packageName?.toString().orEmpty()
-            if (!isRideApp(rootPackage)) continue
+            val ridePackageWindow = isRideApp(rootPackage)
+            val systemOfferWindow = window.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
+                rootPackage != applicationContext.packageName &&
+                rootHasRideOfferSignals(rootNode)
+            if (!ridePackageWindow && !systemOfferWindow) continue
             scannedAnyRideWindow = true
             processScreenContent(
                 rootNode = rootNode,
                 windowType = windowTypeToString(window.type),
                 packageName = rootPackage
-            )?.let { candidates.add(it) }
+            ).let { candidates.addAll(it) }
         }
 
         if (!scannedAnyRideWindow) {
             rootInActiveWindow?.let { activeRoot ->
                 val activePackage = activeRoot.packageName?.toString().orEmpty()
-                if (isRideApp(activePackage)) {
+                if (isRideApp(activePackage) ||
+                    (isSystemOverlayHostPackage(activePackage) && rootHasRideOfferSignals(activeRoot))
+                ) {
                     processScreenContent(
                         rootNode = activeRoot,
                         windowType = "ACTIVE_WINDOW",
                         packageName = activePackage
-                    )?.let { candidates.add(it) }
+                    ).let { candidates.addAll(it) }
                 }
             }
         }
@@ -405,24 +412,26 @@ class RideAcceptService : AccessibilityService() {
         rootNode: AccessibilityNodeInfo,
         windowType: String,
         packageName: String
-    ): RideCandidate? {
-        val scraperData = ScraperData()
-        val fastNode = findAcceptNodeByText(rootNode)
-        if (fastNode != null) {
-            scraperData.targetNode = fastNode
-            scraperData.isSwipe = isSwipeText(extractNodeText(fastNode))
-            extractMetricsNearTarget(fastNode, scraperData)
+    ): List<RideCandidate> {
+        val acceptNodes = findAcceptNodesByText(rootNode)
+        if (acceptNodes.isNotEmpty()) {
+            return acceptNodes.mapNotNull { targetNode ->
+                buildCandidateFromTarget(
+                    targetNode = targetNode,
+                    windowType = windowType,
+                    packageName = packageName
+                )
+            }
         }
 
-        // Full tree scan is slower; run when fast path misses data or target.
-        if (scraperData.targetNode == null || scraperData.fare <= 0.0 || scraperData.distance <= 0.0) {
-            val now = System.currentTimeMillis()
-            if (now - lastFullTreeScanAtMs >= FULL_TREE_SCAN_THROTTLE_MS) {
-                lastFullTreeScanAtMs = now
-                val fullData = ScraperData()
-                extractData(rootNode, fullData)
-                mergeScraperData(scraperData, fullData)
-            }
+        val scraperData = ScraperData()
+
+        val now = System.currentTimeMillis()
+        if (now - lastFullTreeScanAtMs >= FULL_TREE_SCAN_THROTTLE_MS) {
+            lastFullTreeScanAtMs = now
+            val fullData = ScraperData()
+            extractData(rootNode, fullData)
+            mergeScraperData(scraperData, fullData)
         }
 
         if (isEventDataFresh()) {
@@ -442,17 +451,17 @@ class RideAcceptService : AccessibilityService() {
 
         val targetNode = scraperData.targetNode ?: run {
             maybeLogNoTarget(windowType, scraperData)
-            return null
+            return emptyList()
         }
         val fare = scraperData.fare
         val distance = scraperData.distance
 
         maybeLogScrapedData(windowType, fare, distance)
 
-        if (!filterEngine.shouldAccept(fare, distance)) return null
+        if (!filterEngine.shouldAccept(fare, distance)) return emptyList()
         val rankScore = filterEngine.rankScore(fare, distance)
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
-        return RideCandidate(
+        return listOf(RideCandidate(
             windowType = windowType,
             packageName = packageName,
             targetNode = targetNode,
@@ -461,6 +470,43 @@ class RideAcceptService : AccessibilityService() {
             isSwipe = scraperData.isSwipe,
             rankScore = rankScore,
             actionSignature = actionSignature
+        ))
+    }
+
+    private fun buildCandidateFromTarget(
+        targetNode: AccessibilityNodeInfo,
+        windowType: String,
+        packageName: String
+    ): RideCandidate? {
+        val scraperData = ScraperData().apply {
+            this.targetNode = targetNode
+            this.isSwipe = isSwipeText(extractNodeText(targetNode))
+        }
+        extractMetricsNearTarget(targetNode, scraperData)
+
+        if (isEventDataFresh()) {
+            if (scraperData.fare <= 0.0 && lastEventFare > 0.0) {
+                scraperData.fare = lastEventFare
+            }
+            if (scraperData.distance <= 0.0 && lastEventDistance > 0.0) {
+                scraperData.distance = lastEventDistance
+            }
+        }
+
+        val fare = scraperData.fare
+        val distance = scraperData.distance
+        maybeLogScrapedData(windowType, fare, distance)
+        if (!filterEngine.shouldAccept(fare, distance)) return null
+
+        return RideCandidate(
+            windowType = windowType,
+            packageName = packageName,
+            targetNode = targetNode,
+            fare = fare,
+            distance = distance,
+            isSwipe = scraperData.isSwipe,
+            rankScore = filterEngine.rankScore(fare, distance),
+            actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
         )
     }
 
@@ -676,7 +722,7 @@ class RideAcceptService : AccessibilityService() {
         var bestDistance = 0.0
         val candidates = mutableListOf<String>()
 
-        event.text?.forEach { value ->
+        event.text.forEach { value ->
             value?.toString()?.let { candidates.add(it) }
         }
         event.contentDescription?.toString()?.let { candidates.add(it) }
@@ -706,16 +752,23 @@ class RideAcceptService : AccessibilityService() {
         }
     }
 
-    private fun findAcceptNodeByText(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun findAcceptNodesByText(rootNode: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
         val probeKeywords = listOf("Accept", "accept", "Confirm", "confirm", "Match", "match", "Swipe", "swipe")
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        val seenBounds = mutableSetOf<String>()
         for (keyword in probeKeywords) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
-            val candidate = nodes.firstOrNull { isAcceptText(extractNodeText(it)) }
-            if (candidate != null) {
-                return candidate
+            for (node in nodes) {
+                if (!isAcceptText(extractNodeText(node))) continue
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                val key = "${bounds.left}:${bounds.top}:${bounds.right}:${bounds.bottom}:${extractNodeText(node)}"
+                if (seenBounds.add(key)) {
+                    candidates.add(node)
+                }
             }
         }
-        return null
+        return candidates
     }
 
     private fun extractMetricsNearTarget(targetNode: AccessibilityNodeInfo, data: ScraperData) {
@@ -897,6 +950,13 @@ class RideAcceptService : AccessibilityService() {
         return matched
     }
 
+    private fun isSystemOverlayHostPackage(packageName: String): Boolean {
+        val normalized = packageName.lowercase()
+        return normalized.isBlank() ||
+            normalized == "android" ||
+            normalized.contains("systemui")
+    }
+
     private fun isAcceptText(text: String): Boolean {
         val normalized = text
             .lowercase()
@@ -925,6 +985,49 @@ class RideAcceptService : AccessibilityService() {
         val hasContextWord = normalized.contains("pickup") || normalized.contains("drop") || normalized.contains("distance")
         val hasNumber = Regex("""\d+([.,]\d+)?""").containsMatchIn(normalized)
         return hasContextWord && hasNumber
+    }
+
+    private data class RideOfferSignals(
+        var hasAcceptAction: Boolean = false,
+        var hasCurrency: Boolean = false,
+        var hasDistance: Boolean = false
+    ) {
+        val isLikelyRideOffer: Boolean
+            get() = hasAcceptAction && hasCurrency
+    }
+
+    private fun eventContainsRideOfferSignals(event: AccessibilityEvent): Boolean {
+        val signals = RideOfferSignals()
+        event.text.forEach { value ->
+            updateRideOfferSignals(value?.toString().orEmpty(), signals)
+        }
+        updateRideOfferSignals(event.contentDescription?.toString().orEmpty(), signals)
+        event.source?.let { collectRideOfferSignals(it, signals) }
+        return signals.isLikelyRideOffer
+    }
+
+    private fun rootHasRideOfferSignals(rootNode: AccessibilityNodeInfo): Boolean {
+        val signals = RideOfferSignals()
+        collectRideOfferSignals(rootNode, signals)
+        return signals.isLikelyRideOffer
+    }
+
+    private fun collectRideOfferSignals(node: AccessibilityNodeInfo, signals: RideOfferSignals) {
+        updateRideOfferSignals(extractNodeText(node), signals)
+        if (signals.isLikelyRideOffer && signals.hasDistance) return
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectRideOfferSignals(child, signals)
+            if (signals.isLikelyRideOffer && signals.hasDistance) return
+        }
+    }
+
+    private fun updateRideOfferSignals(text: String, signals: RideOfferSignals) {
+        if (text.isBlank()) return
+        if (isAcceptText(text)) signals.hasAcceptAction = true
+        if (containsCurrency(text)) signals.hasCurrency = true
+        if (containsDistance(text)) signals.hasDistance = true
     }
 
     private fun parseFareAmount(text: String): Double {

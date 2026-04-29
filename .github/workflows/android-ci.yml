@@ -37,8 +37,8 @@ jobs:
         with:
           name: AutoRideAccepter-debug-apk
           path: |
-            app/build/outputs/apk/debug/AutoRideAccepter_Latest.apk
-            release_apk/AutoRideAccepter_Latest.apk
+            app/build/outputs/apk/debug/BhadaAccepter_Latest.apk
+            release_apk/BhadaAccepter_Latest.apk
           if-no-files-found: error
 
       - name: Upload lint reports

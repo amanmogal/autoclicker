@@ -27,6 +27,7 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var authManager: AuthManager
     private lateinit var supabaseAuthClient: SupabaseAuthClient
     private val networkExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var sessionSyncInFlight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,7 +66,7 @@ class LoginActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (authManager.isLoggedIn()) {
-            routeLoggedInUser()
+            syncExistingSessionAndRoute()
             return
         }
         refreshLoginStatus()
@@ -151,6 +152,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun syncExistingSessionAndRoute() {
+        if (sessionSyncInFlight) return
         val accessToken = authManager.currentAccessToken()
         if (accessToken.isNullOrBlank()) {
             authManager.logout()
@@ -158,12 +160,14 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
+        sessionSyncInFlight = true
         setLoadingState(true)
         networkExecutor.execute {
-            val result = supabaseAuthClient.refreshCurrentAccess(accessToken)
-            result.accessSnapshot?.let { authManager.saveAccessSnapshot(it) }
+            val result = refreshStoredSession(accessToken)
+            saveAuthResult(result)
 
             runOnUiThread {
+                sessionSyncInFlight = false
                 setLoadingState(false)
                 if (result.errorMessage != null && !authManager.hasStoredAccessSnapshot()) {
                     authManager.logout()
@@ -174,6 +178,24 @@ class LoginActivity : AppCompatActivity() {
                 routeLoggedInUser()
             }
         }
+    }
+
+    private fun refreshStoredSession(accessToken: String): SupabaseAuthResult {
+        val refreshToken = authManager.currentRefreshToken()
+        return if (!refreshToken.isNullOrBlank()) {
+            supabaseAuthClient.refreshSession(refreshToken)
+        } else {
+            supabaseAuthClient.refreshCurrentAccess(accessToken)
+        }
+    }
+
+    private fun saveAuthResult(result: SupabaseAuthResult) {
+        val session = result.session
+        if (session != null) {
+            authManager.saveSession(session, result.accessSnapshot)
+            return
+        }
+        result.accessSnapshot?.let { authManager.saveAccessSnapshot(it) }
     }
 
     private fun routeLoggedInUser() {

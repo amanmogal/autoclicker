@@ -38,6 +38,10 @@ class AuthManager(context: Context) {
             ?: prefs.getString(KEY_AUTH_TOKEN_LEGACY, null)
     }
 
+    fun currentRefreshToken(): String? {
+        return prefs.getString(KEY_AUTH_REFRESH_TOKEN, null)
+    }
+
     fun saveSession(session: SupabaseSession, accessSnapshot: AppAccessSnapshot? = null) {
         val editor = prefs.edit()
             .putString(KEY_AUTH_EMAIL, session.email.trim())
