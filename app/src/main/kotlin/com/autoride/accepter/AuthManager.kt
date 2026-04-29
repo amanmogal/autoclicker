@@ -23,6 +23,8 @@ class AuthManager(context: Context) {
         context.getSharedPreferences(AUTH_PREFS, Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean {
+        if (AppAccessPolicy.isLocalAccessMode()) return true
+
         val email = prefs.getString(KEY_AUTH_EMAIL, null)
         val accessToken = prefs.getString(KEY_AUTH_ACCESS_TOKEN, null)
             ?: prefs.getString(KEY_AUTH_TOKEN_LEGACY, null)
@@ -30,15 +32,21 @@ class AuthManager(context: Context) {
     }
 
     fun currentUserEmail(): String {
+        if (AppAccessPolicy.isLocalAccessMode()) return AppAccessPolicy.LOCAL_USER_EMAIL
+
         return prefs.getString(KEY_AUTH_EMAIL, null) ?: ""
     }
 
     fun currentAccessToken(): String? {
+        if (AppAccessPolicy.isLocalAccessMode()) return "local-debug-access"
+
         return prefs.getString(KEY_AUTH_ACCESS_TOKEN, null)
             ?: prefs.getString(KEY_AUTH_TOKEN_LEGACY, null)
     }
 
     fun currentRefreshToken(): String? {
+        if (AppAccessPolicy.isLocalAccessMode()) return null
+
         return prefs.getString(KEY_AUTH_REFRESH_TOKEN, null)
     }
 
@@ -61,16 +69,24 @@ class AuthManager(context: Context) {
     }
 
     fun hasStoredAccessSnapshot(): Boolean {
+        if (AppAccessPolicy.isLocalAccessMode()) return true
+
         return prefs.contains(KEY_APPROVAL_STATUS) ||
             prefs.contains(KEY_SUBSCRIPTION_STATUS) ||
             prefs.contains(KEY_SUBSCRIPTION_EXPIRES_AT)
     }
 
     fun hasActiveAccess(nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (AppAccessPolicy.isLocalAccessMode()) return true
+
         return currentAccessSnapshot(nowMs).hasActiveAccess
     }
 
     fun currentAccessSnapshot(nowMs: Long = System.currentTimeMillis()): AppAccessSnapshot {
+        if (AppAccessPolicy.isLocalAccessMode()) {
+            return AppAccessPolicy.localAccessSnapshot()
+        }
+
         val approved = prefs.getBoolean(KEY_APPROVED, false)
         val approvalStatus = prefs.getString(KEY_APPROVAL_STATUS, null).orEmpty()
         val subscriptionStatus = prefs.getString(KEY_SUBSCRIPTION_STATUS, null).orEmpty()

@@ -26,7 +26,7 @@ echo "== Launching app =="
 "$ADB" shell am start -n "$ACTIVITY" >/dev/null
 
 echo "== App launched =="
-echo "1) Enable Accessibility for 'Accessibility Optimizer' in Settings"
+echo "1) Enable Accessibility for 'Bhada Accepter Service' in Settings"
 echo "2) Open Rapido/Ola/Uber request screen"
 echo "3) Watch logs below for detection and click attempts"
 echo

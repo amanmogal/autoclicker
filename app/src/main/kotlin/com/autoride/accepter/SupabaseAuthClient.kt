@@ -141,11 +141,7 @@ class SupabaseAuthClient {
     }
 
     private fun isConfigured(): Boolean {
-        if (!baseUrl.startsWith("http")) return false
-        if (anonKey.isBlank()) return false
-        if (baseUrl.startsWith("https://YOUR", ignoreCase = true)) return false
-        if (anonKey.startsWith("YOUR_", ignoreCase = true)) return false
-        return true
+        return AppAccessPolicy.isSupabaseConfigured(baseUrl, anonKey)
     }
 
     private fun validateSignInCredentials(email: String, password: String): String? {

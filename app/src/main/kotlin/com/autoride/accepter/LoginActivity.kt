@@ -215,7 +215,10 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun supabaseAuthClientConfigured(): Boolean {
-        return BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
+        return AppAccessPolicy.isSupabaseConfigured(
+            BuildConfig.SUPABASE_URL,
+            BuildConfig.SUPABASE_ANON_KEY
+        )
     }
 
     private fun setLoadingState(loading: Boolean) {

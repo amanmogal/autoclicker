@@ -41,6 +41,7 @@ android {
         versionName "1.0.7"
         buildConfigField "String", "SUPABASE_URL", "\"${supabaseUrl}\""
         buildConfigField "String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey}\""
+        buildConfigField "boolean", "LOCAL_ACCESS_MODE", "${envOrProp("LOCAL_ACCESS_MODE").trim().equalsIgnoreCase("false") ? "false" : "true"}"
     }
 
     buildFeatures {
