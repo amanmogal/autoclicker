@@ -99,6 +99,13 @@ class RideAcceptService : AccessibilityService() {
             "ಸ್ವೀಕರಿಸಿ", "ಒಪ್ಪಿಕೊ", "ದೃಢಪಡಿಸಿ", "ಖಚಿತಪಡಿಸು", "ಹೊಂದಿಕೆ", "ಹೊಂದಿಸು", "ಹೊಂದಾಣಿಕೆ"
         )
 
+        private val ACCEPT_TEXT_PROBE_KEYWORDS = ACCEPT_KEYWORDS +
+            ACCEPT_KEYWORDS.map { keyword ->
+                keyword.replaceFirstChar { char ->
+                    if (char.isLowerCase()) char.titlecase(Locale.ROOT) else char.toString()
+                }
+            }
+
         private val BLOCKED_ACTION_PHRASES = setOf(
             "go to",
             "start ride",
@@ -413,13 +420,16 @@ class RideAcceptService : AccessibilityService() {
     ): List<RideCandidate> {
         val acceptNodes = findAcceptNodesByText(rootNode)
         if (acceptNodes.isNotEmpty()) {
-            return acceptNodes.mapNotNull { targetNode ->
+            val candidates = acceptNodes.mapNotNull { targetNode ->
                 buildCandidateFromTarget(
                     targetNode = targetNode,
                     windowType = windowType,
                     packageName = packageName
                 )
             }
+            if (candidates.isNotEmpty()) return candidates
+            if (acceptNodes.size > 1) return emptyList()
+            Log.d(TAG, "[$windowType] Accept target found without valid metrics; trying bounded fallback scan")
         }
 
         val scraperData = ScraperData()
@@ -751,10 +761,9 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun findAcceptNodesByText(rootNode: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
-        val probeKeywords = listOf("Accept", "accept", "Confirm", "confirm", "Match", "match", "Swipe", "swipe")
         val candidates = mutableListOf<AccessibilityNodeInfo>()
         val seenBounds = mutableSetOf<String>()
-        for (keyword in probeKeywords) {
+        for (keyword in ACCEPT_TEXT_PROBE_KEYWORDS) {
             val nodes = rootNode.findAccessibilityNodeInfosByText(keyword)
             for (node in nodes) {
                 if (!isAcceptText(extractNodeText(node))) continue
@@ -997,7 +1006,11 @@ class RideAcceptService : AccessibilityService() {
         var hasDistance: Boolean = false
     ) {
         val isLikelyRideOffer: Boolean
-            get() = hasAcceptAction && hasCurrency
+            get() = RideOfferSignalPolicy.isLikelyRideOffer(
+                hasAcceptAction = hasAcceptAction,
+                hasCurrency = hasCurrency,
+                hasDistance = hasDistance
+            )
     }
 
     private fun eventContainsRideOfferSignals(event: AccessibilityEvent): Boolean {
