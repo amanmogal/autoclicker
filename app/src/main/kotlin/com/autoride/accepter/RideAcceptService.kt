@@ -198,6 +198,16 @@ class RideAcceptService : AccessibilityService() {
             }
             Log.d(TAG, "Accessibility overlay reattached")
         }.onFailure { error ->
+            if (error is IllegalStateException &&
+                error.message?.contains("already been added", ignoreCase = true) == true
+            ) {
+                overlayAttached = true
+                if (pendingActionSignature == null && overlayRestoreRunnable == null) {
+                    view.visibility = View.VISIBLE
+                }
+                Log.d(TAG, "Accessibility overlay already attached")
+                return true
+            }
             Log.e(TAG, "Overlay reattach failed", error)
         }
         return overlayAttached
