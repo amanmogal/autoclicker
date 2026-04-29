@@ -49,4 +49,14 @@ class FilterEngineTest {
         assertEquals(150.5, engine.parseAmount("₹150.5"), 0.001)
         assertEquals(2.75, engine.parseAmount("Distance 2,75 km"), 0.001)
     }
+
+    @Test
+    fun rankScore_shouldPrioritizeHigherFarePerKm() {
+        val engine = FilterEngine()
+
+        val higherAbsoluteFare = engine.rankScore(fare = 250.0, distance = 10.0)
+        val betterFarePerKm = engine.rankScore(fare = 180.0, distance = 4.0)
+
+        assertTrue(betterFarePerKm > higherAbsoluteFare)
+    }
 }

@@ -3,19 +3,48 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { input ->
+        localProperties.load(input)
+    }
+}
+
+def envOrProp = { String key ->
+    def value = project.findProperty(key) ?: System.getenv(key)
+    if (value == null || value.toString().trim().isEmpty()) {
+        value = localProperties.getProperty(key)
+    }
+    (value ?: "").toString()
+}
+
 android {
     namespace 'com.autoride.accepter'
     compileSdk 36
+
+    def supabaseUrl = envOrProp("SUPABASE_URL")
+    def supabaseAnonKey = envOrProp("SUPABASE_ANON_KEY")
+    def supabaseProjectRef = envOrProp("SUPABASE_PROJECT_REF").trim()
+    if (supabaseProjectRef.isEmpty()) {
+        supabaseProjectRef = "kggaugweermsmelggpme"
+    }
+    if (supabaseUrl.trim().isEmpty() && !supabaseProjectRef.isEmpty()) {
+        supabaseUrl = "https://${supabaseProjectRef}.supabase.co"
+    }
 
     defaultConfig {
         applicationId "com.autoride.accepter"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
-        buildConfigField "String", "UPI_PAYEE_VPA", '"merchant@upi"'
-        buildConfigField "String", "UPI_PAYEE_NAME", '"Auto Ride Accepter"'
-        buildConfigField "boolean", "ALLOW_LOCAL_SUBSCRIPTION_ACTIVATION", "false"
+        versionCode 7
+        versionName "1.0.7"
+        buildConfigField "String", "SUPABASE_URL", "\"${supabaseUrl}\""
+        buildConfigField "String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {
@@ -34,7 +63,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "AutoRideAccepter_Latest.apk"
+            outputFileName = "BhadaAccepter_Latest.apk"
         }
     }
 }
@@ -48,7 +77,7 @@ dependencies {
 }
 
 task copyApk(type: Copy) {
-    from("${project.buildDir}/outputs/apk/debug/AutoRideAccepter_Latest.apk")
+    from("${project.buildDir}/outputs/apk/debug/BhadaAccepter_Latest.apk")
     into("${project.rootDir}/release_apk")
     dependsOn 'assembleDebug'
 }

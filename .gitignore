@@ -10,7 +10,14 @@ local.properties
 
 # Runtime / local state
 .omx/
+.codex/
+.serena/
 logs.txt
+admin-web/.next/
+admin-web/node_modules/
+admin-web/.env.local
+admin-web/.env
+admin-web/tsconfig.tsbuildinfo
 
 # Generated binaries
 *.apk

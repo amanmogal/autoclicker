@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_core_dashboard"
+        android:icon="@android:drawable/ic_menu_view"
+        android:title="@string/nav_core_dashboard" />
+    <item
+        android:id="@+id/nav_automation"
+        android:icon="@android:drawable/ic_menu_manage"
+        android:title="@string/nav_automation_screen" />
+    <item
+        android:id="@+id/nav_profile"
+        android:icon="@android:drawable/ic_menu_myplaces"
+        android:title="@string/nav_profile_screen" />
+    <item
+        android:id="@+id/nav_logout"
+        android:icon="@android:drawable/ic_lock_power_off"
+        android:title="@string/logout_button" />
+</menu>

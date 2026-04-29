@@ -1,7 +1,5 @@
 package com.autoride.accepter
 
-import android.util.Log
-
 /**
  * FilterEngine handles the business logic for deciding whether to accept a ride.
  * It compares extracted screen data against user-defined thresholds.
@@ -47,6 +45,25 @@ class FilterEngine {
         return decision
     }
 
+    fun farePerKm(fare: Double, distance: Double): Double {
+        if (fare <= 0.0 || distance <= 0.0) return 0.0
+        return fare / distance
+    }
+
+    /**
+     * Scores rides for prioritization when multiple offers are visible.
+     * Higher score means better earning potential while still rewarding absolute fare.
+     */
+    fun rankScore(fare: Double, distance: Double): Double {
+        val farePerKmScore = farePerKm(fare, distance)
+        return if (distance > 0.0) {
+            (farePerKmScore * 100.0) + fare
+        } else {
+            // Unknown distance offers are allowed, but ranked lower by default.
+            fare * 0.2
+        }
+    }
+
     private fun maybeLogDecision(
         fare: Double,
         distance: Double,
@@ -59,7 +76,7 @@ class FilterEngine {
         if (snapshot != lastDecisionSnapshot || now - lastDecisionLogAtMs >= LOG_THROTTLE_MS) {
             lastDecisionSnapshot = snapshot
             lastDecisionLogAtMs = now
-            Log.d(TAG, "Filtering -> $snapshot")
+            println("Filtering -> $snapshot")
         }
     }
 

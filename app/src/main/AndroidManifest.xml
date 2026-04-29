@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions for Auto-Acceptance Logic -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -9,13 +9,14 @@
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
+        android:icon="@drawable/bhada_accepter_logo"
         android:label="@string/app_name"
+        android:roundIcon="@drawable/bhada_accepter_logo"
         android:supportsRtl="true"
         android:theme="@style/Theme.App">
 
-        <!-- Main Controller UI -->
         <activity
-            android:name=".MainActivity"
+            android:name=".LoginActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -23,7 +24,22 @@
             </intent-filter>
         </activity>
 
-        <!-- The Stealth Accessibility Engine -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ProfileActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AccessLockedActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AutomationActivity"
+            android:exported="false" />
+
         <service
             android:name=".RideAcceptService"
             android:label="@string/service_label"

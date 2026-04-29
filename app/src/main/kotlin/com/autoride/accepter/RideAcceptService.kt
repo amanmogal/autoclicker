@@ -21,7 +21,6 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import android.widget.ImageView
 import android.widget.TextView
 import java.util.Locale
 import kotlin.math.max
@@ -47,6 +46,12 @@ class RideAcceptService : AccessibilityService() {
     private val periodicScanRunnable = object : Runnable {
         override fun run() {
             if (!isAutoAcceptEnabled) return
+            if (!authManager.hasActiveAccess()) {
+                Log.w(TAG, "Access expired or revoked while service was running; disabling automation.")
+                AppAccessController.disableAutomation(this@RideAcceptService)
+                updateSettings()
+                return
+            }
             runCatching { processAllWindows() }
                 .onFailure { error -> Log.e(TAG, "Periodic scan failed", error) }
             scanHandler.postDelayed(this, PERIODIC_SCAN_MS)
@@ -54,6 +59,7 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private lateinit var windowManager: WindowManager
+    private lateinit var authManager: AuthManager
     private var overlayView: View? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var overlayAttached = false
@@ -126,6 +132,7 @@ class RideAcceptService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "Service Connected - Listening for target apps")
+        authManager = AuthManager(this)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         settingsPrefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE).also {
             it.registerOnSharedPreferenceChangeListener(settingsListener)
@@ -224,11 +231,20 @@ class RideAcceptService : AccessibilityService() {
 
     private fun toggleServiceEnabledFromOverlay() {
         val prefs = getSharedPreferences("RideFilters", Context.MODE_PRIVATE)
-        if (isAutoAcceptEnabled) {
-            Log.d(TAG, "Overlay tap ignored: service already enabled")
-            return
+        val nextEnabled = !isAutoAcceptEnabled
+        if (nextEnabled) {
+            if (!authManager.isLoggedIn()) {
+                Log.w(TAG, "Overlay toggle blocked: login required")
+                return
+            }
+            if (!authManager.hasActiveAccess()) {
+                Log.w(TAG, "Overlay toggle blocked: manual renewal required")
+                AppAccessController.disableAutomation(this)
+                updateSettings()
+                return
+            }
         }
-        val nextEnabled = true
+
         prefs.edit()
             .putBoolean("serviceEnabled", nextEnabled)
             .putBoolean("service_enabled", nextEnabled)
@@ -248,15 +264,12 @@ class RideAcceptService : AccessibilityService() {
 
     private fun updateOverlayStatus() {
         overlayView?.let {
-            val icon = it.findViewById<ImageView>(R.id.statusIcon)
             val statusText = it.findViewById<TextView>(R.id.statusText)
             if (isAutoAcceptEnabled) {
-                icon.setColorFilter(Color.GREEN)
-                it.background?.setTint(Color.parseColor("#CC000000"))
+                it.background?.setTint(Color.parseColor("#CC15233F"))
                 statusText.text = getString(R.string.overlay_status_on)
             } else {
-                icon.setColorFilter(Color.RED)
-                it.background?.setTint(Color.parseColor("#CC444444"))
+                it.background?.setTint(Color.parseColor("#CC2A3344"))
                 statusText.text = getString(R.string.overlay_status_off)
             }
         }
@@ -270,12 +283,17 @@ class RideAcceptService : AccessibilityService() {
             "service_enabled",
             true
         )
+        if (isAutoAcceptEnabled && !authManager.hasActiveAccess()) {
+            Log.w(TAG, "Stored automation flag ignored because access is not active.")
+            AppAccessController.disableAutomation(this)
+            isAutoAcceptEnabled = false
+        }
 
-        filterEngine.minFare = readFloatPref(prefs, "minFare", "min_fare", 100.0f)
-        filterEngine.maxFare = readFloatPref(prefs, "maxFare", "max_fare", 5000.0f)
-        filterEngine.minDistance = readFloatPref(prefs, "minDistance", "min_pickup_km", 0.0f)
-        filterEngine.maxDistance = readFloatPref(prefs, "maxDistance", "max_pickup_km", 5.0f)
-        filterEngine.minFarePerKm = readFloatPref(prefs, "minFarePerKm", "min_fare_per_km", 15.0f)
+        filterEngine.minFare = readFloatPref(prefs, "minFare", "min_fare", 100.0f).toDouble()
+        filterEngine.maxFare = readFloatPref(prefs, "maxFare", "max_fare", 5000.0f).toDouble()
+        filterEngine.minDistance = readFloatPref(prefs, "minDistance", "min_pickup_km", 0.0f).toDouble()
+        filterEngine.maxDistance = readFloatPref(prefs, "maxDistance", "max_pickup_km", 5.0f).toDouble()
+        filterEngine.minFarePerKm = readFloatPref(prefs, "minFarePerKm", "min_fare_per_km", 15.0f).toDouble()
         filterEngine.allowFareOnlyWhenDistanceMissing = readBooleanPref(
             prefs,
             "allowFareOnlyWhenDistanceMissing",
@@ -335,21 +353,59 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun processAllWindows() {
-        var processedWindow = false
+        val candidates = mutableListOf<RideCandidate>()
+        var scannedAnyRideWindow = false
 
         for (window in windows) {
-            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
+                window.type != AccessibilityWindowInfo.TYPE_SYSTEM
+            ) {
+                continue
+            }
             val rootNode = window.root ?: continue
-            processedWindow = true
-            processScreenContent(rootNode, windowTypeToString(window.type))
+            val rootPackage = rootNode.packageName?.toString().orEmpty()
+            if (!isRideApp(rootPackage)) continue
+            scannedAnyRideWindow = true
+            processScreenContent(
+                rootNode = rootNode,
+                windowType = windowTypeToString(window.type),
+                packageName = rootPackage
+            )?.let { candidates.add(it) }
         }
 
-        if (!processedWindow) {
-            rootInActiveWindow?.let { processScreenContent(it, "ACTIVE_WINDOW") }
+        if (!scannedAnyRideWindow) {
+            rootInActiveWindow?.let { activeRoot ->
+                val activePackage = activeRoot.packageName?.toString().orEmpty()
+                if (isRideApp(activePackage)) {
+                    processScreenContent(
+                        rootNode = activeRoot,
+                        windowType = "ACTIVE_WINDOW",
+                        packageName = activePackage
+                    )?.let { candidates.add(it) }
+                }
+            }
+        }
+
+        val bestCandidate = candidates.maxByOrNull { it.rankScore } ?: return
+        if (!canAttemptAction(bestCandidate.actionSignature)) return
+
+        Log.d(
+            TAG,
+            "[${bestCandidate.windowType}] Prioritized ride from ${bestCandidate.packageName}: " +
+                "fare=${bestCandidate.fare}, distance=${bestCandidate.distance}, score=${bestCandidate.rankScore}"
+        )
+        if (bestCandidate.isSwipe) {
+            performSwipeAction(bestCandidate.targetNode, bestCandidate.windowType, bestCandidate.actionSignature)
+        } else {
+            clickNode(bestCandidate.targetNode, bestCandidate.windowType, bestCandidate.actionSignature)
         }
     }
 
-    private fun processScreenContent(rootNode: AccessibilityNodeInfo, windowType: String) {
+    private fun processScreenContent(
+        rootNode: AccessibilityNodeInfo,
+        windowType: String,
+        packageName: String
+    ): RideCandidate? {
         val scraperData = ScraperData()
         val fastNode = findAcceptNodeByText(rootNode)
         if (fastNode != null) {
@@ -386,23 +442,26 @@ class RideAcceptService : AccessibilityService() {
 
         val targetNode = scraperData.targetNode ?: run {
             maybeLogNoTarget(windowType, scraperData)
-            return
+            return null
         }
         val fare = scraperData.fare
         val distance = scraperData.distance
 
         maybeLogScrapedData(windowType, fare, distance)
 
-        if (!filterEngine.shouldAccept(fare, distance)) return
+        if (!filterEngine.shouldAccept(fare, distance)) return null
+        val rankScore = filterEngine.rankScore(fare, distance)
         val actionSignature = buildActionSignature(windowType, targetNode, fare, distance)
-        if (!canAttemptAction(actionSignature)) return
-
-        Log.d(TAG, "[$windowType] Acceptance Logic Match - Triggering Automation")
-        if (scraperData.isSwipe) {
-            performSwipeAction(targetNode, windowType, actionSignature)
-        } else {
-            clickNode(targetNode, windowType, actionSignature)
-        }
+        return RideCandidate(
+            windowType = windowType,
+            packageName = packageName,
+            targetNode = targetNode,
+            fare = fare,
+            distance = distance,
+            isSwipe = scraperData.isSwipe,
+            rankScore = rankScore,
+            actionSignature = actionSignature
+        )
     }
 
     private class ScraperData {
@@ -413,6 +472,17 @@ class RideAcceptService : AccessibilityService() {
         var fallbackTargetNode: AccessibilityNodeInfo? = null
         var fallbackTargetScore: Int = Int.MIN_VALUE
     }
+
+    private data class RideCandidate(
+        val windowType: String,
+        val packageName: String,
+        val targetNode: AccessibilityNodeInfo,
+        val fare: Double,
+        val distance: Double,
+        val isSwipe: Boolean,
+        val rankScore: Double,
+        val actionSignature: String
+    )
 
     private fun extractData(node: AccessibilityNodeInfo, data: ScraperData) {
         val text = extractNodeText(node)
