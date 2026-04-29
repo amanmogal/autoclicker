@@ -48,6 +48,7 @@ class RideAcceptService : AccessibilityService() {
     private val periodicScanRunnable = object : Runnable {
         override fun run() {
             if (!isAutoAcceptEnabled) return
+            ensureOverlayAttached()
             if (!authManager.hasActiveAccess()) {
                 Log.w(TAG, "Access expired or revoked while service was running; disabling automation.")
                 AppAccessController.disableAutomation(this@RideAcceptService)
@@ -150,6 +151,8 @@ class RideAcceptService : AccessibilityService() {
     }
 
     private fun showOverlay() {
+        if (ensureOverlayAttached()) return
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -173,6 +176,31 @@ class RideAcceptService : AccessibilityService() {
             Log.e(TAG, "Overlay attach failed", error)
         }
         updateOverlayStatus()
+    }
+
+    private fun ensureOverlayAttached(): Boolean {
+        val view = overlayView ?: return false
+        val params = overlayLayoutParams ?: return false
+
+        if (overlayAttached && view.isAttachedToWindow) {
+            if (pendingActionSignature == null && overlayRestoreRunnable == null && view.visibility != View.VISIBLE) {
+                view.visibility = View.VISIBLE
+            }
+            return true
+        }
+
+        overlayAttached = false
+        runCatching {
+            windowManager.addView(view, params)
+            overlayAttached = true
+            if (pendingActionSignature == null && overlayRestoreRunnable == null) {
+                view.visibility = View.VISIBLE
+            }
+            Log.d(TAG, "Accessibility overlay reattached")
+        }.onFailure { error ->
+            Log.e(TAG, "Overlay reattach failed", error)
+        }
+        return overlayAttached
     }
 
     private fun attachOverlayTouchController() {
@@ -315,6 +343,7 @@ class RideAcceptService : AccessibilityService() {
             Log.d(TAG, "Settings Updated: $settingsSnapshot")
         }
         updateOverlayStatus()
+        ensureOverlayAttached()
         if (isAutoAcceptEnabled) {
             schedulePeriodicScan()
         } else {
@@ -327,6 +356,7 @@ class RideAcceptService : AccessibilityService() {
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
             updateSettings()
+            ensureOverlayAttached()
         }
 
         if (!isAutoAcceptEnabled) return
@@ -1347,6 +1377,8 @@ class RideAcceptService : AccessibilityService() {
             runCatching { windowManager.removeView(it) }
             overlayAttached = false
         }
+        overlayView = null
+        overlayLayoutParams = null
     }
 
     override fun onInterrupt() {}
