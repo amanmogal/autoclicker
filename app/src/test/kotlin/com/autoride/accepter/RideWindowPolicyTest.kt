@@ -32,6 +32,22 @@ class RideWindowPolicyTest {
     }
 
     @Test
+    fun shouldScanSystemHostedAcceptDistanceWindowWithoutCurrencySignal() {
+        assertTrue(
+            RideWindowPolicy.shouldScanWindow(
+                windowType = AccessibilityWindowInfo.TYPE_SYSTEM,
+                rootPackage = "android",
+                appPackage = "com.autoride.accepter",
+                rootHasOfferSignals = RideOfferSignalPolicy.isLikelyRideOffer(
+                    hasAcceptAction = true,
+                    hasCurrency = false,
+                    hasDistance = true
+                )
+            )
+        )
+    }
+
+    @Test
     fun shouldScanVendorApplicationOfferWindowEvenWithoutDriverRole() {
         assertTrue(
             RideWindowPolicy.shouldScanWindow(

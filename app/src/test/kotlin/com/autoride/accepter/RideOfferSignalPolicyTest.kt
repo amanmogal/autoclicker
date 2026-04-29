@@ -39,12 +39,23 @@ class RideOfferSignalPolicyTest {
     }
 
     @Test
-    fun isLikelyRideOffer_rejectsAcceptAndDistanceWithoutFare() {
-        assertFalse(
+    fun isLikelyRideOffer_acceptAndDistanceWithoutFare() {
+        assertTrue(
             RideOfferSignalPolicy.isLikelyRideOffer(
                 hasAcceptAction = true,
                 hasCurrency = false,
                 hasDistance = true
+            )
+        )
+    }
+
+    @Test
+    fun isLikelyRideOffer_rejectsAcceptOnly() {
+        assertFalse(
+            RideOfferSignalPolicy.isLikelyRideOffer(
+                hasAcceptAction = true,
+                hasCurrency = false,
+                hasDistance = false
             )
         )
     }

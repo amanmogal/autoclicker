@@ -6,6 +6,7 @@ object RideOfferSignalPolicy {
         hasCurrency: Boolean,
         hasDistance: Boolean
     ): Boolean {
-        return hasCurrency && (hasAcceptAction || hasDistance)
+        if (hasCurrency && (hasAcceptAction || hasDistance)) return true
+        return hasAcceptAction && hasDistance
     }
 }

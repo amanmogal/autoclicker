@@ -429,11 +429,19 @@ class RideAcceptService : AccessibilityService() {
                 buildCandidateFromTarget(
                     targetNode = targetNode,
                     windowType = windowType,
-                    packageName = packageName
+                    packageName = packageName,
+                    allowEventMetricFallback = acceptNodes.size == 1
                 )
             }
             if (candidates.isNotEmpty()) return candidates
             Log.d(TAG, "[$windowType] Accept target found without valid metrics; trying bounded fallback scan")
+
+            val targetContainerCandidates = buildCandidatesFromAcceptContainers(
+                acceptNodes = acceptNodes,
+                windowType = windowType,
+                packageName = packageName
+            )
+            if (targetContainerCandidates.isNotEmpty()) return targetContainerCandidates
         }
 
         val containerCandidates = buildCandidatesFromOfferContainers(
@@ -496,7 +504,8 @@ class RideAcceptService : AccessibilityService() {
     private fun buildCandidateFromTarget(
         targetNode: AccessibilityNodeInfo,
         windowType: String,
-        packageName: String
+        packageName: String,
+        allowEventMetricFallback: Boolean
     ): RideCandidate? {
         val scraperData = ScraperData().apply {
             this.targetNode = targetNode
@@ -504,7 +513,7 @@ class RideAcceptService : AccessibilityService() {
         }
         extractMetricsNearTarget(targetNode, scraperData)
 
-        if (isEventDataFresh()) {
+        if (allowEventMetricFallback && isEventDataFresh()) {
             if (scraperData.fare <= 0.0 && lastEventFare > 0.0) {
                 scraperData.fare = lastEventFare
             }
@@ -550,6 +559,44 @@ class RideAcceptService : AccessibilityService() {
         return candidates
             .distinctBy { it.actionSignature }
             .sortedByDescending { it.rankScore }
+    }
+
+    private fun buildCandidatesFromAcceptContainers(
+        acceptNodes: List<AccessibilityNodeInfo>,
+        windowType: String,
+        packageName: String
+    ): List<RideCandidate> {
+        return acceptNodes
+            .mapNotNull { targetNode ->
+                findBoundedOfferContainerForTarget(targetNode)?.let { containerNode ->
+                    buildCandidateFromOfferContainer(containerNode, windowType, packageName)
+                }
+            }
+            .distinctBy { it.actionSignature }
+            .sortedByDescending { it.rankScore }
+    }
+
+    private fun findBoundedOfferContainerForTarget(targetNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val targetBounds = Rect()
+        targetNode.getBoundsInScreen(targetBounds)
+        var ancestor: AccessibilityNodeInfo? = targetNode.parent
+        var depth = 0
+        var fallback: AccessibilityNodeInfo? = null
+
+        while (ancestor != null && depth <= 6) {
+            val ancestorBounds = Rect()
+            ancestor.getBoundsInScreen(ancestorBounds)
+            if (isLikelyOfferContainer(ancestorBounds, targetBounds)) {
+                fallback = ancestor
+                if (rootHasRideOfferSignals(ancestor)) {
+                    return ancestor
+                }
+            }
+            ancestor = ancestor.parent
+            depth += 1
+        }
+
+        return fallback
     }
 
     private fun collectOfferContainerCandidates(
@@ -701,6 +748,14 @@ class RideAcceptService : AccessibilityService() {
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
         if (bounds.width() > 0 && bounds.height() > 0) {
+            if (shouldSwipeFallback(node, bounds)) {
+                val dispatched = dispatchSwipeGesture(bounds, windowType, actionSignature)
+                if (dispatched) {
+                    Log.d(TAG, "[$windowType] Swipe fallback gesture dispatched")
+                    return true
+                }
+            }
+
             val path = Path().apply {
                 moveTo(bounds.centerX().toFloat(), bounds.centerY().toFloat())
             }
@@ -729,6 +784,18 @@ class RideAcceptService : AccessibilityService() {
             return clickNode(node, windowType, actionSignature)
         }
 
+        return dispatchSwipeGesture(bounds, windowType, actionSignature).also { dispatched ->
+            if (dispatched) {
+                Log.d(TAG, "[$windowType] Swipe gesture dispatched")
+            }
+        }
+    }
+
+    private fun dispatchSwipeGesture(
+        bounds: Rect,
+        windowType: String,
+        actionSignature: String
+    ): Boolean {
         val startX = bounds.left + (bounds.width() * 0.2f)
         val endX = bounds.right - (bounds.width() * 0.2f)
         val y = bounds.centerY().toFloat()
@@ -741,12 +808,13 @@ class RideAcceptService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 200))
             .build()
 
-        val dispatched = dispatchGestureWithOverlayGuard(gesture, windowType, actionSignature)
-        if (dispatched) {
-            Log.d(TAG, "[$windowType] Swipe gesture dispatched")
-            return true
-        }
-        return clickNode(node, windowType, actionSignature)
+        return dispatchGestureWithOverlayGuard(gesture, windowType, actionSignature)
+    }
+
+    private fun shouldSwipeFallback(node: AccessibilityNodeInfo, bounds: Rect): Boolean {
+        if (bounds.width() < 420 || bounds.height() !in 48..260) return false
+        val text = extractNodeText(node).lowercase().trim()
+        return text.isBlank() || isAcceptText(text) || isSwipeText(text)
     }
 
     private fun dispatchGestureWithOverlayGuard(
